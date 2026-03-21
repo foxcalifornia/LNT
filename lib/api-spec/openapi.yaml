@@ -1,22 +1,24 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: LNT Paris Stock Management API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: caisse
+    description: Caisse operations
+  - name: inventory
+    description: Inventory operations
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +26,170 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /caisse/sessions:
+    get:
+      operationId: getSessions
+      tags: [caisse]
+      summary: Get all caisse sessions
+      responses:
+        "200":
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+    post:
+      operationId: createSession
+      tags: [caisse]
+      summary: Create a new caisse session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSession"
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+
+  /collections:
+    get:
+      operationId: getCollections
+      tags: [inventory]
+      summary: Get all collections with their products
+      responses:
+        "200":
+          description: List of collections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CollectionWithProduits"
+    post:
+      operationId: createCollection
+      tags: [inventory]
+      summary: Create a new collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCollection"
+      responses:
+        "201":
+          description: Collection created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Collection"
+
+  /collections/{id}:
+    delete:
+      operationId: deleteCollection
+      tags: [inventory]
+      summary: Delete a collection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Collection deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessMessage"
+
+  /produits:
+    post:
+      operationId: createProduit
+      tags: [inventory]
+      summary: Create a new product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProduit"
+      responses:
+        "201":
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Produit"
+
+  /produits/{id}:
+    put:
+      operationId: updateProduit
+      tags: [inventory]
+      summary: Update product quantity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProduit"
+      responses:
+        "200":
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Produit"
+    delete:
+      operationId: deleteProduit
+      tags: [inventory]
+      summary: Delete a product
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Product deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessMessage"
+
+  /ventes:
+    post:
+      operationId: createVente
+      tags: [inventory]
+      summary: Record a sale and subtract from stock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVente"
+      responses:
+        "201":
+          description: Sale recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vente"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +200,178 @@ components:
       required:
         - status
 
+    Session:
+      type: object
+      properties:
+        id:
+          type: integer
+        date:
+          type: string
+        heure:
+          type: string
+        localisation:
+          type: string
+          nullable: true
+        typePaiement:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - date
+        - heure
+        - typePaiement
+        - createdAt
+
+    CreateSession:
+      type: object
+      properties:
+        date:
+          type: string
+        heure:
+          type: string
+        localisation:
+          type: string
+          nullable: true
+        typePaiement:
+          type: string
+      required:
+        - date
+        - heure
+        - typePaiement
+
+    Collection:
+      type: object
+      properties:
+        id:
+          type: integer
+        nom:
+          type: string
+        description:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - nom
+        - createdAt
+
+    Produit:
+      type: object
+      properties:
+        id:
+          type: integer
+        collectionId:
+          type: integer
+        couleur:
+          type: string
+        quantite:
+          type: integer
+        createdAt:
+          type: string
+      required:
+        - id
+        - collectionId
+        - couleur
+        - quantite
+        - createdAt
+
+    CollectionWithProduits:
+      type: object
+      properties:
+        id:
+          type: integer
+        nom:
+          type: string
+        description:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        produits:
+          type: array
+          items:
+            $ref: "#/components/schemas/Produit"
+      required:
+        - id
+        - nom
+        - createdAt
+        - produits
+
+    CreateCollection:
+      type: object
+      properties:
+        nom:
+          type: string
+        description:
+          type: string
+          nullable: true
+      required:
+        - nom
+
+    CreateProduit:
+      type: object
+      properties:
+        collectionId:
+          type: integer
+        couleur:
+          type: string
+        quantite:
+          type: integer
+      required:
+        - collectionId
+        - couleur
+        - quantite
+
+    UpdateProduit:
+      type: object
+      properties:
+        quantite:
+          type: integer
+        couleur:
+          type: string
+      required:
+        - quantite
+
+    CreateVente:
+      type: object
+      properties:
+        produitId:
+          type: integer
+        quantiteVendue:
+          type: integer
+        typePaiement:
+          type: string
+      required:
+        - produitId
+        - quantiteVendue
+        - typePaiement
+
+    Vente:
+      type: object
+      properties:
+        id:
+          type: integer
+        produitId:
+          type: integer
+        quantiteVendue:
+          type: integer
+        typePaiement:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - produitId
+        - quantiteVendue
+        - typePaiement
+        - createdAt
+
+    SuccessMessage:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
