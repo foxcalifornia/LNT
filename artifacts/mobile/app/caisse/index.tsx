@@ -87,17 +87,14 @@ export default function CaisseScreen() {
     }
   };
 
-  const handleVente = async (produitId: number, quantite: number) => {
+  const handleVente = async (items: { produitId: number; quantite: number }[]) => {
     if (!currentSession) return;
-    try {
+    for (const item of items) {
       await api.inventory.createVente({
-        produitId,
-        quantiteVendue: quantite,
+        produitId: item.produitId,
+        quantiteVendue: item.quantite,
         typePaiement: paymentMode === "cash" ? "CASH" : "CARTE",
       });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err: any) {
-      Alert.alert("Erreur", err.message ?? "Stock insuffisant");
     }
   };
 
@@ -244,7 +241,7 @@ type ActiveCaisseViewProps = {
   mode: "cash" | "carte";
   session: Session | null;
   collections: CollectionWithProduits[];
-  onVente: (produitId: number, quantite: number) => Promise<void>;
+  onVente: (items: { produitId: number; quantite: number }[]) => Promise<void>;
   onClose: () => void;
   onShowVente: () => void;
 };
@@ -312,7 +309,7 @@ function ActiveCaisseView({ mode, session, collections, onVente, onClose, onShow
 type QuickStockRowProps = {
   produit: Produit;
   color: string;
-  onVente: (id: number, q: number) => Promise<void>;
+  onVente: (items: { produitId: number; quantite: number }[]) => Promise<void>;
 };
 
 function QuickStockRow({ produit, color, onVente }: QuickStockRowProps) {
@@ -322,7 +319,7 @@ function QuickStockRow({ produit, color, onVente }: QuickStockRowProps) {
     if (produit.quantite <= 0 || loading) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setLoading(true);
-    await onVente(produit.id, 1);
+    await onVente([{ produitId: produit.id, quantite: 1 }]);
     setLoading(false);
   };
 

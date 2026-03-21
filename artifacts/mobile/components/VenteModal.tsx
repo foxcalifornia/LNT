@@ -16,50 +16,80 @@ import { formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api
 
 const COLORS = Colors.light;
 
+type CartItem = {
+  produit: Produit & { collectionNom: string };
+  quantite: number;
+};
+
 type Props = {
   visible: boolean;
   collections: CollectionWithProduits[];
   paymentMode: "cash" | "carte";
-  onVente: (produitId: number, quantite: number) => Promise<void>;
+  onVente: (items: { produitId: number; quantite: number }[]) => Promise<void>;
   onClose: () => void;
 };
 
 export function VenteModal({ visible, collections, paymentMode, onVente, onClose }: Props) {
-  const [selectedProduit, setSelectedProduit] = useState<Produit | null>(null);
-  const [quantite, setQuantite] = useState(1);
+  const [view, setView] = useState<"collections" | "produits">("collections");
+  const [selectedCollection, setSelectedCollection] = useState<CollectionWithProduits | null>(null);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
   const color = paymentMode === "carte" ? COLORS.card_payment : COLORS.cash;
 
+  const totalItems = cart.reduce((sum, i) => sum + i.quantite, 0);
+  const totalCentimes = cart.reduce((sum, i) => sum + i.produit.prixCentimes * i.quantite, 0);
+
+  const getCartQty = (produitId: number) =>
+    cart.find((i) => i.produit.id === produitId)?.quantite ?? 0;
+
+  const updateCart = (produit: Produit & { collectionNom: string }, delta: number) => {
+    Haptics.selectionAsync();
+    setCart((prev) => {
+      const current = prev.find((i) => i.produit.id === produit.id)?.quantite ?? 0;
+      const next = Math.max(0, Math.min(produit.quantite, current + delta));
+      if (next === 0) return prev.filter((i) => i.produit.id !== produit.id);
+      if (current > 0) return prev.map((i) => i.produit.id === produit.id ? { ...i, quantite: next } : i);
+      return [...prev, { produit, quantite: next }];
+    });
+  };
+
   const handleConfirm = async () => {
-    if (!selectedProduit || loading) return;
+    if (cart.length === 0 || loading) return;
     setLoading(true);
     try {
-      await onVente(selectedProduit.id, quantite);
+      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })));
       setSuccess(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setTimeout(() => {
         setSuccess(false);
-        setSelectedProduit(null);
-        setQuantite(1);
+        setCart([]);
+        setView("collections");
+        setSelectedCollection(null);
         onClose();
-      }, 1200);
+      }, 1500);
     } catch {
       setLoading(false);
     }
   };
 
   const handleClose = () => {
-    setSelectedProduit(null);
-    setQuantite(1);
+    setCart([]);
+    setView("collections");
+    setSelectedCollection(null);
     setSuccess(false);
     onClose();
   };
 
-  const allProduits = collections.flatMap((c) =>
-    c.produits.map((p) => ({ ...p, collectionNom: c.nom }))
-  );
+  const openCollection = (col: CollectionWithProduits) => {
+    Haptics.selectionAsync();
+    setSelectedCollection(col);
+    setView("produits");
+  };
+
+  const successTotalItems = totalItems;
+  const successTotalCentimes = totalCentimes;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
@@ -68,122 +98,57 @@ export function VenteModal({ visible, collections, paymentMode, onVente, onClose
           <View style={styles.handle} />
 
           <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>Enregistrer une Vente</Text>
-            <Pressable onPress={handleClose} style={styles.closeBtn}>
-              <Feather name="x" size={20} color={COLORS.textSecondary} />
+            {view === "produits" ? (
+              <Pressable onPress={() => setView("collections")} style={styles.navBtn}>
+                <Feather name="arrow-left" size={20} color={COLORS.text} />
+              </Pressable>
+            ) : (
+              <View style={{ width: 36 }} />
+            )}
+            <Text style={styles.sheetTitle} numberOfLines={1}>
+              {view === "collections" ? "Nouvelle Vente" : selectedCollection?.nom ?? ""}
+            </Text>
+            <Pressable onPress={handleClose} style={styles.navBtn}>
+              <Feather name="x" size={18} color={COLORS.textSecondary} />
             </Pressable>
           </View>
 
           {success ? (
             <View style={styles.successContainer}>
-              <View style={[styles.successIcon, { backgroundColor: COLORS.cash + "20" }]}>
-                <Feather name="check-circle" size={40} color={COLORS.cash} />
+              <View style={[styles.successIcon, { backgroundColor: color + "20" }]}>
+                <Feather name="check-circle" size={48} color={color} />
               </View>
-              <Text style={styles.successText}>Vente enregistrée !</Text>
+              <Text style={[styles.successText, { color }]}>Vente enregistrée !</Text>
+              <Text style={styles.successSub}>
+                {successTotalItems} article{successTotalItems > 1 ? "s" : ""}
+                {successTotalCentimes > 0 ? ` · ${formatPrix(successTotalCentimes)}` : ""}
+              </Text>
             </View>
+          ) : view === "collections" ? (
+            <CollectionsView
+              collections={collections}
+              cart={cart}
+              color={color}
+              onOpen={openCollection}
+            />
           ) : (
-            <>
-              <Text style={styles.sectionLabel}>Sélectionner un produit</Text>
-              <ScrollView style={styles.productList} showsVerticalScrollIndicator={false}>
-                {allProduits.map((p) => (
-                  <Pressable
-                    key={p.id}
-                    style={[
-                      styles.productRow,
-                      selectedProduit?.id === p.id && { borderColor: color, backgroundColor: color + "08" },
-                      p.quantite === 0 && styles.productRowDisabled,
-                    ]}
-                    onPress={() => {
-                      if (p.quantite > 0) {
-                        Haptics.selectionAsync();
-                        setSelectedProduit(p);
-                        setQuantite(1);
-                      }
-                    }}
-                    disabled={p.quantite === 0}
-                  >
-                    <View style={[styles.productDot, { backgroundColor: getColorHex(p.couleur) }]} />
-                    <View style={styles.productInfo}>
-                      <Text style={[styles.productName, p.quantite === 0 && { color: COLORS.textSecondary }]}>
-                        {p.couleur}
-                      </Text>
-                      <Text style={styles.productCollection}>{p.collectionNom}</Text>
-                    </View>
-                    {p.prixCentimes > 0 && (
-                      <Text style={styles.productPrice}>{formatPrix(p.prixCentimes)}</Text>
-                    )}
-                    <Text style={[
-                      styles.productStock,
-                      p.quantite === 0 ? { color: COLORS.danger } :
-                      p.quantite <= 2 ? { color: "#F59E0B" } : { color: COLORS.success }
-                    ]}>
-                      {p.quantite}p
-                    </Text>
-                    {selectedProduit?.id === p.id && (
-                      <Feather name="check-circle" size={18} color={color} />
-                    )}
-                  </Pressable>
-                ))}
-                {allProduits.length === 0 && (
-                  <Text style={styles.emptyText}>Aucun produit disponible</Text>
-                )}
-              </ScrollView>
+            <ProduitsView
+              collection={selectedCollection}
+              cart={cart}
+              color={color}
+              getCartQty={getCartQty}
+              updateCart={updateCart}
+            />
+          )}
 
-              {selectedProduit && selectedProduit.prixCentimes > 0 && (
-                <View style={styles.totalBanner}>
-                  <Text style={styles.totalLabel}>Total</Text>
-                  <Text style={[styles.totalAmount, { color }]}>
-                    {formatPrix(selectedProduit.prixCentimes * quantite)}
-                  </Text>
-                </View>
-              )}
-
-              {selectedProduit && (
-                <View style={styles.quantiteSection}>
-                  <Text style={styles.sectionLabel}>Quantité</Text>
-                  <View style={styles.quantiteRow}>
-                    <Pressable
-                      style={[styles.qtyBtn, quantite <= 1 && styles.qtyBtnDisabled]}
-                      onPress={() => { if (quantite > 1) { Haptics.selectionAsync(); setQuantite(q => q - 1); } }}
-                      disabled={quantite <= 1}
-                    >
-                      <Feather name="minus" size={20} color={quantite <= 1 ? COLORS.textSecondary : COLORS.text} />
-                    </Pressable>
-                    <Text style={styles.qtyValue}>{quantite}</Text>
-                    <Pressable
-                      style={[styles.qtyBtn, quantite >= selectedProduit.quantite && styles.qtyBtnDisabled]}
-                      onPress={() => { if (quantite < selectedProduit.quantite) { Haptics.selectionAsync(); setQuantite(q => q + 1); } }}
-                      disabled={quantite >= selectedProduit.quantite}
-                    >
-                      <Feather name="plus" size={20} color={quantite >= selectedProduit.quantite ? COLORS.textSecondary : COLORS.text} />
-                    </Pressable>
-                  </View>
-                </View>
-              )}
-
-              <View style={styles.footer}>
-                <Pressable
-                  style={[
-                    styles.confirmBtn,
-                    { backgroundColor: color },
-                    (!selectedProduit || loading) && styles.confirmBtnDisabled,
-                  ]}
-                  onPress={handleConfirm}
-                  disabled={!selectedProduit || loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <Feather name="check" size={20} color="#fff" />
-                      <Text style={styles.confirmText}>
-                        Confirmer la Vente {selectedProduit ? `(${quantite})` : ""}
-                      </Text>
-                    </>
-                  )}
-                </Pressable>
-              </View>
-            </>
+          {!success && cart.length > 0 && (
+            <CartFooter
+              totalItems={totalItems}
+              totalCentimes={totalCentimes}
+              color={color}
+              loading={loading}
+              onConfirm={handleConfirm}
+            />
           )}
         </View>
       </View>
@@ -191,12 +156,222 @@ export function VenteModal({ visible, collections, paymentMode, onVente, onClose
   );
 }
 
+function CollectionsView({
+  collections,
+  cart,
+  color,
+  onOpen,
+}: {
+  collections: CollectionWithProduits[];
+  cart: CartItem[];
+  color: string;
+  onOpen: (col: CollectionWithProduits) => void;
+}) {
+  return (
+    <>
+      <Text style={styles.sectionLabel}>Choisir une collection</Text>
+      <ScrollView style={styles.listContainer} showsVerticalScrollIndicator={false}>
+        {collections.map((col) => {
+          const available = col.produits.filter((p) => p.quantite > 0).length;
+          const inCart = cart
+            .filter((i) => i.produit.collectionNom === col.nom)
+            .reduce((s, i) => s + i.quantite, 0);
+          const disabled = available === 0;
+          return (
+            <Pressable
+              key={col.id}
+              style={[styles.collectionRow, disabled && styles.rowDisabled]}
+              onPress={() => onOpen(col)}
+              disabled={disabled}
+            >
+              <View style={[styles.collectionIconBg, { backgroundColor: color + "15" }]}>
+                <Feather name="layers" size={18} color={disabled ? COLORS.textSecondary : color} />
+              </View>
+              <View style={styles.collectionInfo}>
+                <Text style={[styles.collectionName, disabled && { color: COLORS.textSecondary }]}>
+                  {col.nom}
+                </Text>
+                <Text style={styles.collectionSub}>
+                  {available} modèle{available !== 1 ? "s" : ""} disponible{available !== 1 ? "s" : ""}
+                </Text>
+              </View>
+              <View style={styles.collectionRowRight}>
+                {inCart > 0 && (
+                  <View style={[styles.badge, { backgroundColor: color }]}>
+                    <Text style={styles.badgeText}>{inCart}</Text>
+                  </View>
+                )}
+                <Feather
+                  name="chevron-right"
+                  size={20}
+                  color={disabled ? COLORS.border : COLORS.textSecondary}
+                />
+              </View>
+            </Pressable>
+          );
+        })}
+        {collections.length === 0 && (
+          <Text style={styles.emptyText}>Aucune collection disponible</Text>
+        )}
+      </ScrollView>
+    </>
+  );
+}
+
+function ProduitsView({
+  collection,
+  cart,
+  color,
+  getCartQty,
+  updateCart,
+}: {
+  collection: CollectionWithProduits | null;
+  cart: CartItem[];
+  color: string;
+  getCartQty: (id: number) => number;
+  updateCart: (p: Produit & { collectionNom: string }, delta: number) => void;
+}) {
+  if (!collection) return null;
+  return (
+    <>
+      <Text style={styles.sectionLabel}>Sélectionner les modèles</Text>
+      <ScrollView style={styles.listContainer} showsVerticalScrollIndicator={false}>
+        {collection.produits.map((p) => {
+          const produitWithCol = { ...p, collectionNom: collection.nom };
+          const cartQty = getCartQty(p.id);
+          const isEmpty = p.quantite === 0;
+          const isSelected = cartQty > 0;
+          return (
+            <View
+              key={p.id}
+              style={[
+                styles.productRow,
+                isEmpty && styles.rowDisabled,
+                isSelected && { borderColor: color, backgroundColor: color + "07" },
+              ]}
+            >
+              <View style={[styles.colorDot, { backgroundColor: getColorHex(p.couleur) }]} />
+              <View style={styles.productInfo}>
+                <Text style={[styles.productName, isEmpty && { color: COLORS.textSecondary }]}>
+                  {p.couleur}
+                </Text>
+                <View style={styles.productMeta}>
+                  {p.prixCentimes > 0 && (
+                    <Text style={[styles.productPrice, { color: isSelected ? color : COLORS.accent }]}>
+                      {formatPrix(p.prixCentimes)}
+                    </Text>
+                  )}
+                  <Text
+                    style={[
+                      styles.productStock,
+                      isEmpty
+                        ? { color: COLORS.danger }
+                        : p.quantite <= 2
+                        ? { color: "#F59E0B" }
+                        : { color: COLORS.success },
+                    ]}
+                  >
+                    {p.quantite} en stock
+                  </Text>
+                </View>
+              </View>
+              <View style={[styles.qtyControl, isEmpty && { opacity: 0.3 }]}>
+                <Pressable
+                  style={[styles.qtyBtn, { borderColor: cartQty > 0 ? color : COLORS.border }]}
+                  onPress={() => updateCart(produitWithCol, -1)}
+                  disabled={cartQty === 0 || isEmpty}
+                >
+                  <Feather
+                    name="minus"
+                    size={15}
+                    color={cartQty > 0 ? color : COLORS.textSecondary}
+                  />
+                </Pressable>
+                <Text style={[styles.qtyValue, isSelected && { color }]}>{cartQty}</Text>
+                <Pressable
+                  style={[
+                    styles.qtyBtn,
+                    { borderColor: cartQty < p.quantite && !isEmpty ? color : COLORS.border },
+                  ]}
+                  onPress={() => updateCart(produitWithCol, +1)}
+                  disabled={cartQty >= p.quantite || isEmpty}
+                >
+                  <Feather
+                    name="plus"
+                    size={15}
+                    color={
+                      cartQty < p.quantite && !isEmpty ? color : COLORS.textSecondary
+                    }
+                  />
+                </Pressable>
+              </View>
+            </View>
+          );
+        })}
+        {collection.produits.length === 0 && (
+          <Text style={styles.emptyText}>Aucun produit dans cette collection</Text>
+        )}
+        <View style={{ height: 16 }} />
+      </ScrollView>
+    </>
+  );
+}
+
+function CartFooter({
+  totalItems,
+  totalCentimes,
+  color,
+  loading,
+  onConfirm,
+}: {
+  totalItems: number;
+  totalCentimes: number;
+  color: string;
+  loading: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <View style={styles.cartFooter}>
+      <View style={styles.cartInfo}>
+        <Text style={styles.cartItemCount}>
+          {totalItems} article{totalItems !== 1 ? "s" : ""}
+        </Text>
+        {totalCentimes > 0 && (
+          <Text style={[styles.cartTotal, { color }]}>{formatPrix(totalCentimes)}</Text>
+        )}
+      </View>
+      <Pressable
+        style={[styles.confirmBtn, { backgroundColor: color }, loading && { opacity: 0.7 }]}
+        onPress={onConfirm}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : (
+          <>
+            <Feather name="check" size={20} color="#fff" />
+            <Text style={styles.confirmText}>Confirmer la Vente</Text>
+          </>
+        )}
+      </Pressable>
+    </View>
+  );
+}
+
 function getColorHex(couleur: string): string {
   const map: Record<string, string> = {
-    bleu: "#3B82F6", rouge: "#EF4444", vert: "#10B981",
-    noir: "#1F2937", blanc: "#D1D5DB", rose: "#EC4899",
-    jaune: "#F59E0B", violet: "#8B5CF6", orange: "#F97316",
-    gris: "#6B7280", beige: "#D2B48C", marron: "#92400E",
+    bleu: "#3B82F6",
+    rouge: "#EF4444",
+    vert: "#10B981",
+    noir: "#1F2937",
+    blanc: "#D1D5DB",
+    rose: "#EC4899",
+    jaune: "#F59E0B",
+    violet: "#8B5CF6",
+    orange: "#F97316",
+    gris: "#6B7280",
+    beige: "#D2B48C",
+    marron: "#92400E",
   };
   return map[couleur.toLowerCase()] ?? Colors.light.accent;
 }
@@ -204,15 +379,15 @@ function getColorHex(couleur: string): string {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "flex-end",
   },
   sheet: {
     backgroundColor: COLORS.card,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingBottom: 40,
-    maxHeight: "85%",
+    paddingBottom: 36,
+    maxHeight: "90%",
   },
   handle: {
     width: 36,
@@ -226,24 +401,29 @@ const styles = StyleSheet.create({
   sheetHeader: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+    gap: 8,
   },
-  sheetTitle: {
-    flex: 1,
-    fontSize: 18,
-    fontFamily: "Inter_700Bold",
-    color: COLORS.text,
-  },
-  closeBtn: {
+  navBtn: {
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: COLORS.border,
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     justifyContent: "center",
     alignItems: "center",
+  },
+  sheetTitle: {
+    flex: 1,
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.text,
+    textAlign: "center",
+    letterSpacing: -0.3,
   },
   sectionLabel: {
     fontSize: 11,
@@ -253,26 +433,78 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 8,
+    paddingBottom: 10,
   },
-  productList: {
-    maxHeight: 240,
-    paddingHorizontal: 20,
+  listContainer: {
+    maxHeight: 380,
+    paddingHorizontal: 16,
+  },
+  collectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    marginBottom: 10,
+    backgroundColor: COLORS.card,
+    gap: 14,
+  },
+  rowDisabled: {
+    opacity: 0.4,
+  },
+  collectionIconBg: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  collectionInfo: {
+    flex: 1,
+    gap: 3,
+  },
+  collectionName: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.text,
+    letterSpacing: -0.2,
+  },
+  collectionSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+  },
+  collectionRowRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  badge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+  },
+  badgeText: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
   productRow: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: COLORS.border,
     marginBottom: 8,
     gap: 12,
   },
-  productRowDisabled: {
-    opacity: 0.4,
-  },
-  productDot: {
+  colorDot: {
     width: 14,
     height: 14,
     borderRadius: 7,
@@ -281,6 +513,7 @@ const styles = StyleSheet.create({
   },
   productInfo: {
     flex: 1,
+    gap: 4,
   },
   productName: {
     fontSize: 15,
@@ -288,113 +521,102 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textTransform: "capitalize",
   },
-  productCollection: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: COLORS.textSecondary,
+  productMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   productPrice: {
     fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.light.accent,
+    fontFamily: "Inter_700Bold",
   },
   productStock: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
   },
-  totalBanner: {
+  qtyControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  qtyBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  qtyValue: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.text,
+    minWidth: 24,
+    textAlign: "center",
+  },
+  cartFooter: {
+    marginTop: 4,
+    marginHorizontal: 16,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 10,
+  },
+  cartInfo: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginHorizontal: 20,
-    marginTop: 8,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: Colors.light.background,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
   },
-  totalLabel: {
+  cartItemCount: {
     fontSize: 14,
     fontFamily: "Inter_500Medium",
-    color: Colors.light.textSecondary,
+    color: COLORS.textSecondary,
   },
-  totalAmount: {
+  cartTotal: {
     fontSize: 22,
     fontFamily: "Inter_700Bold",
-  },
-  quantiteSection: {
-    paddingHorizontal: 20,
-  },
-  quantiteRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 24,
-    paddingVertical: 12,
-  },
-  qtyBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: COLORS.background,
-    borderWidth: 1.5,
-    borderColor: COLORS.border,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  qtyBtnDisabled: {
-    opacity: 0.4,
-  },
-  qtyValue: {
-    fontSize: 28,
-    fontFamily: "Inter_700Bold",
-    color: COLORS.text,
-    minWidth: 48,
-    textAlign: "center",
-  },
-  footer: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
   },
   confirmBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    padding: 18,
-    borderRadius: 16,
-  },
-  confirmBtnDisabled: {
-    opacity: 0.5,
+    padding: 16,
+    borderRadius: 14,
   },
   confirmText: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: "Inter_700Bold",
     color: "#fff",
   },
   successContainer: {
     alignItems: "center",
-    paddingVertical: 48,
-    gap: 16,
+    paddingVertical: 52,
+    gap: 12,
   },
   successIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
     justifyContent: "center",
     alignItems: "center",
   },
   successText: {
-    fontSize: 20,
+    fontSize: 22,
     fontFamily: "Inter_700Bold",
-    color: COLORS.cash,
+  },
+  successSub: {
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
   },
   emptyText: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary,
     textAlign: "center",
-    paddingVertical: 24,
+    paddingVertical: 32,
   },
 });
