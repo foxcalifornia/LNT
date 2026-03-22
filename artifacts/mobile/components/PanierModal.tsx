@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,7 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import { formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
 import {
   cartTotalCentimes,
   cartTotalItems,
@@ -24,8 +24,6 @@ import {
 
 const COLORS = Colors.light;
 
-type SumupPhase = "idle" | "creating" | "waiting" | "confirming" | "error";
-
 type Props = {
   visible: boolean;
   cart: CartItem[];
@@ -33,11 +31,9 @@ type Props = {
   onCartChange: (cart: CartItem[]) => void;
   onClose: () => void;
   onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
-  sessionId?: number | null;
-  onCarteSuccess?: () => Promise<void>;
 };
 
-export function PanierModal({ visible, cart, collections, onCartChange, onClose, onVente, sessionId, onCarteSuccess }: Props) {
+export function PanierModal({ visible, cart, collections, onCartChange, onClose, onVente }: Props) {
   const insets = useSafeAreaInsets();
   const [editingProduitId, setEditingProduitId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,40 +41,11 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
   const [successMode, setSuccessMode] = useState<"cash" | "carte" | null>(null);
   const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number } | null>(null);
 
-  const [sumupPhase, setSumupPhase] = useState<SumupPhase>("idle");
-  const [saleRef, setSaleRef] = useState<string | null>(null);
-  const [sumupError, setSumupError] = useState<string | null>(null);
-  const [sumupTxId, setSumupTxId] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pollCountRef = useRef(0);
-
   const promo = computePromo(cart);
   const totalItems = cartTotalItems(cart);
   const totalCentimes = cartTotalCentimes(cart);
   const totalFinal = totalCentimes - promo.discountCentimes;
   const hasPromo = promo.nbFree > 0;
-
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
-
-  const stopPolling = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    pollCountRef.current = 0;
-  };
-
-  const resetSumup = () => {
-    stopPolling();
-    setSumupPhase("idle");
-    setSaleRef(null);
-    setSumupError(null);
-    setSumupTxId(null);
-  };
 
   const handlePay = async (mode: "cash" | "carte") => {
     if (cart.length === 0 || loading) return;
@@ -101,102 +68,6 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     } catch {
       setLoading(false);
     }
-  };
-
-  const handlePayCarte = async () => {
-    if (cart.length === 0 || sumupPhase !== "idle") return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setSumupPhase("creating");
-    setSumupError(null);
-
-    const items = cart.map((i) => {
-      const freeCount = promo.freeDetails.find((fd) => fd.produitId === i.produit.id)?.count ?? 0;
-      const paidQty = i.quantite - freeCount;
-      return {
-        produitId: i.produit.id,
-        quantite: i.quantite,
-        montantCentimes: Math.max(0, paidQty) * i.produit.prixCentimes,
-      };
-    });
-
-    let ref: string;
-    try {
-      const result = await api.payments.createSumupCheckout({
-        amountCentimes: totalFinal,
-        items,
-        description: `Vente LNT Paris — ${totalItems} article${totalItems > 1 ? "s" : ""}`,
-      });
-      ref = result.saleReference;
-      setSaleRef(ref);
-      setSumupPhase("waiting");
-    } catch (err: unknown) {
-      setSumupError((err as Error)?.message ?? "Erreur lors de la création du paiement");
-      setSumupPhase("error");
-      return;
-    }
-
-    const startPolling = (reference: string) => {
-      pollCountRef.current = 0;
-      pollRef.current = setInterval(async () => {
-        pollCountRef.current++;
-
-        if (pollCountRef.current > 100) {
-          stopPolling();
-          setSumupError("Délai d'attente dépassé. Vérifiez le terminal et réessayez.");
-          setSumupPhase("error");
-          return;
-        }
-
-        try {
-          const statusResult = await api.payments.getSumupStatus(reference);
-          if (statusResult.status === "paid") {
-            stopPolling();
-            setSumupTxId(statusResult.sumupTransactionId ?? null);
-            setSumupPhase("confirming");
-            try {
-              await api.payments.confirmSumupPayment({ saleReference: reference, sessionId });
-              setSuccessMode("carte");
-              setSuccessSnapshot({ items: totalItems, total: totalFinal });
-              setSuccess(true);
-              setSumupPhase("idle");
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              if (onCarteSuccess) await onCarteSuccess();
-              setTimeout(() => {
-                setSuccess(false);
-                setSuccessMode(null);
-                setSuccessSnapshot(null);
-                setSaleRef(null);
-                setSumupTxId(null);
-                onCartChange([]);
-                onClose();
-              }, 1800);
-            } catch (confirmErr: unknown) {
-              setSumupError((confirmErr as Error)?.message ?? "Erreur lors de la confirmation");
-              setSumupPhase("error");
-            }
-          } else if (statusResult.status === "failed") {
-            stopPolling();
-            setSumupError("Le paiement a échoué sur le terminal.");
-            setSumupPhase("error");
-          } else if (statusResult.status === "cancelled") {
-            stopPolling();
-            setSumupError("Le paiement a été annulé.");
-            setSumupPhase("error");
-          }
-        } catch {
-        }
-      }, 3000);
-    };
-
-    startPolling(ref);
-  };
-
-  const handleCancelSumup = async () => {
-    stopPolling();
-    if (saleRef) {
-      await api.payments.cancelSumupPayment(saleRef).catch(() => {});
-    }
-    resetSumup();
   };
 
   const updateQty = (produitId: number, delta: number) => {
@@ -286,65 +157,6 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                 <Text style={[styles.successModeText, { color: successColor }]}>
                   Paiement {successMode === "carte" ? "Carte Bancaire" : "Cash"}
                 </Text>
-              </View>
-              {sumupTxId && (
-                <Text style={styles.sumupTxIdText}>Réf. SumUp : {sumupTxId}</Text>
-              )}
-            </View>
-          ) : sumupPhase === "creating" || sumupPhase === "confirming" ? (
-            <View style={styles.sumupOverlay}>
-              <View style={[styles.sumupIconBg, { backgroundColor: COLORS.card_payment + "15" }]}>
-                <ActivityIndicator size="large" color={COLORS.card_payment} />
-              </View>
-              <Text style={[styles.sumupTitle, { color: COLORS.card_payment }]}>
-                {sumupPhase === "creating" ? "Création du paiement…" : "Validation en cours…"}
-              </Text>
-              <Text style={styles.sumupSub}>
-                {sumupPhase === "creating"
-                  ? "Connexion au terminal SumUp"
-                  : "Enregistrement de la vente"}
-              </Text>
-            </View>
-          ) : sumupPhase === "waiting" ? (
-            <View style={styles.sumupOverlay}>
-              <View style={[styles.sumupIconBg, { backgroundColor: COLORS.card_payment + "15" }]}>
-                <Feather name="credit-card" size={48} color={COLORS.card_payment} />
-              </View>
-              <Text style={[styles.sumupTitle, { color: COLORS.card_payment }]}>
-                Paiement en cours
-              </Text>
-              <Text style={styles.sumupSub}>
-                Présentez la carte sur le terminal SumUp
-              </Text>
-              <Text style={styles.sumupAmount}>{formatPrix(totalFinal)}</Text>
-              <View style={styles.sumupDots}>
-                <ActivityIndicator size="small" color={COLORS.card_payment} />
-                <Text style={styles.sumupWaiting}>En attente du terminal…</Text>
-              </View>
-              <Pressable style={styles.sumupCancelBtn} onPress={handleCancelSumup}>
-                <Text style={styles.sumupCancelText}>Annuler le paiement</Text>
-              </Pressable>
-            </View>
-          ) : sumupPhase === "error" ? (
-            <View style={styles.sumupOverlay}>
-              <View style={[styles.sumupIconBg, { backgroundColor: COLORS.danger + "12" }]}>
-                <Feather name="x-circle" size={48} color={COLORS.danger} />
-              </View>
-              <Text style={[styles.sumupTitle, { color: COLORS.danger }]}>
-                Paiement annulé ou échoué
-              </Text>
-              <Text style={styles.sumupSub}>{sumupError ?? "Une erreur est survenue."}</Text>
-              <View style={styles.sumupErrorBtns}>
-                <Pressable
-                  style={[styles.sumupRetryBtn]}
-                  onPress={() => { resetSumup(); handlePayCarte(); }}
-                >
-                  <Feather name="refresh-cw" size={15} color="#fff" />
-                  <Text style={styles.sumupRetryText}>Réessayer</Text>
-                </Pressable>
-                <Pressable style={styles.sumupBackBtn} onPress={resetSumup}>
-                  <Text style={styles.sumupBackText}>Retour au panier</Text>
-                </Pressable>
               </View>
             </View>
           ) : cart.length === 0 ? (
@@ -518,8 +330,8 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                   </Pressable>
                   <Pressable
                     style={[styles.payBtn, { backgroundColor: COLORS.card_payment }, loading && { opacity: 0.6 }]}
-                    onPress={handlePayCarte}
-                    disabled={loading || sumupPhase !== "idle"}
+                    onPress={() => handlePay("carte")}
+                    disabled={loading}
                   >
                     {loading ? (
                       <ActivityIndicator color="#fff" size="small" />
@@ -705,58 +517,6 @@ const styles = StyleSheet.create({
   totalFinalRow: { paddingTop: 8, marginTop: 4, borderTopWidth: 1.5, borderTopColor: COLORS.border },
   totalFinalLabel: { fontSize: 16, fontFamily: "Inter_700Bold", color: COLORS.text },
   totalFinalValue: { fontSize: 20, fontFamily: "Inter_700Bold", color: COLORS.accent, letterSpacing: -0.5 },
-
-  sumupOverlay: {
-    flex: 1, alignItems: "center", justifyContent: "center",
-    paddingHorizontal: 32, gap: 16,
-  },
-  sumupIconBg: {
-    width: 96, height: 96, borderRadius: 48,
-    justifyContent: "center", alignItems: "center", marginBottom: 4,
-  },
-  sumupTitle: {
-    fontSize: 20, fontFamily: "Inter_700Bold",
-    letterSpacing: -0.4, textAlign: "center",
-  },
-  sumupSub: {
-    fontSize: 14, fontFamily: "Inter_400Regular",
-    color: COLORS.textSecondary, textAlign: "center",
-  },
-  sumupAmount: {
-    fontSize: 34, fontFamily: "Inter_700Bold",
-    color: COLORS.card_payment, letterSpacing: -1, marginTop: 4,
-  },
-  sumupDots: {
-    flexDirection: "row", alignItems: "center", gap: 10,
-  },
-  sumupWaiting: {
-    fontSize: 13, fontFamily: "Inter_500Medium", color: COLORS.textSecondary,
-  },
-  sumupCancelBtn: {
-    marginTop: 16, paddingVertical: 13, paddingHorizontal: 28,
-    borderRadius: 12, borderWidth: 1.5, borderColor: COLORS.danger + "50",
-  },
-  sumupCancelText: {
-    fontSize: 14, fontFamily: "Inter_600SemiBold", color: COLORS.danger,
-  },
-  sumupErrorBtns: { gap: 10, alignItems: "stretch", alignSelf: "stretch" },
-  sumupRetryBtn: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 8, backgroundColor: COLORS.card_payment,
-    paddingVertical: 14, borderRadius: 14,
-  },
-  sumupRetryText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff" },
-  sumupBackBtn: {
-    alignItems: "center", paddingVertical: 12,
-    borderRadius: 12, borderWidth: 1.5, borderColor: COLORS.border,
-  },
-  sumupBackText: {
-    fontSize: 14, fontFamily: "Inter_600SemiBold", color: COLORS.textSecondary,
-  },
-  sumupTxIdText: {
-    fontSize: 11, fontFamily: "Inter_400Regular",
-    color: COLORS.textSecondary, marginTop: 4,
-  },
 
   footer: {
     paddingHorizontal: 16, paddingTop: 14,

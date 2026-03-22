@@ -104,21 +104,6 @@ export function formatDateLabel(isoDate: string): string {
   return date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
 
-export type SumupPaymentStatus = "pending" | "paid" | "failed" | "cancelled";
-
-export type CreateSumupResult = {
-  saleReference: string;
-  checkoutId: string;
-  paymentId: number;
-  status: SumupPaymentStatus;
-};
-
-export type SumupStatusResult = {
-  status: SumupPaymentStatus;
-  saleReference: string;
-  sumupTransactionId?: string | null;
-};
-
 export const api = {
   caisse: {
     getSessions: () => request<Session[]>("/caisse/sessions"),
@@ -160,28 +145,5 @@ export const api = {
   },
   reporting: {
     getDaily: () => request<JourReport[]>("/reporting/daily"),
-  },
-  payments: {
-    createSumupCheckout: (data: {
-      amountCentimes: number;
-      items: { produitId: number; quantite: number; montantCentimes: number }[];
-      description?: string;
-    }) =>
-      request<CreateSumupResult>("/payments/sumup/create", {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
-    getSumupStatus: (saleReference: string) =>
-      request<SumupStatusResult>(`/payments/sumup/status/${encodeURIComponent(saleReference)}`),
-    confirmSumupPayment: (data: { saleReference: string; sessionId?: number | null }) =>
-      request<{ success: boolean; venteIds: number[]; saleReference: string }>("/payments/sumup/confirm", {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
-    cancelSumupPayment: (saleReference: string) =>
-      request<{ success: boolean }>("/payments/sumup/cancel", {
-        method: "POST",
-        body: JSON.stringify({ saleReference }),
-      }),
   },
 };
