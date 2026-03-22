@@ -33,15 +33,17 @@ function RootLayoutNav() {
       <Stack.Screen
         name="caisse"
         options={{
-          presentation: "modal",
+          presentation: "fullScreenModal",
           headerShown: false,
+          animation: "slide_from_bottom",
         }}
       />
       <Stack.Screen
         name="inventaire"
         options={{
-          presentation: "modal",
+          presentation: "fullScreenModal",
           headerShown: false,
+          animation: "slide_from_bottom",
         }}
       />
     </Stack>

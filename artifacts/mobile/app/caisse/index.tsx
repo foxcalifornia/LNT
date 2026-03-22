@@ -16,11 +16,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import Colors from "@/constants/colors";
-import { api, formatPrix, type Session, type CollectionWithProduits } from "@/lib/api";
+import { api, formatPrix, type Session } from "@/lib/api";
 import { cartTotalItems, type CartItem } from "@/lib/cart";
 import { VenteModal } from "@/components/VenteModal";
 import { PasswordModal } from "@/components/PasswordModal";
-import { InventaireReadonlyModal } from "@/components/InventaireReadonlyModal";
 import { PanierModal } from "@/components/PanierModal";
 
 const COLORS = Colors.light;
@@ -56,7 +55,6 @@ export default function CaisseScreen() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [showVente, setShowVente] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [showInventaire, setShowInventaire] = useState(false);
   const [showPanier, setShowPanier] = useState(false);
   const [openingLoading, setOpeningLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -251,7 +249,7 @@ export default function CaisseScreen() {
           cart={cart}
           onClose={closeCaisse}
           onShowVente={() => setShowVente(true)}
-          onShowInventaire={() => setShowInventaire(true)}
+          onShowInventaire={() => router.push("/caisse/inventaire")}
           onShowVentesJour={() => router.push("/caisse/ventes-jour")}
           onShowPanier={() => setShowPanier(true)}
           onCancelLastVente={handleCancelLastVente}
@@ -279,12 +277,6 @@ export default function CaisseScreen() {
           onClose={() => setShowVente(false)}
         />
       )}
-
-      <InventaireReadonlyModal
-        visible={showInventaire}
-        collections={collections}
-        onClose={() => setShowInventaire(false)}
-      />
 
       <PanierModal
         visible={showPanier}
