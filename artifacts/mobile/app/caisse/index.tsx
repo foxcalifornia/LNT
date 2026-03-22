@@ -269,6 +269,8 @@ export default function CaisseScreen() {
       <PanierModal
         visible={showPanier}
         cart={cart}
+        collections={collections}
+        onCartChange={setCart}
         onClose={() => setShowPanier(false)}
         onOpenVente={(mode) => {
           setVentePaymentMode(mode);
