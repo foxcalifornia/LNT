@@ -146,4 +146,32 @@ export const api = {
   reporting: {
     getDaily: () => request<JourReport[]>("/reporting/daily"),
   },
+  payments: {
+    create: (data: {
+      montantCentimes: number;
+      description?: string;
+      items: { produitId: number; quantite: number }[];
+    }) =>
+      request<{ saleReference: string; checkoutId: string; readerEnvoyé: boolean }>(
+        "/payments/create",
+        { method: "POST", body: JSON.stringify(data) }
+      ),
+    getStatus: (saleReference: string) =>
+      request<{ status: "PENDING" | "PAID" | "FAILED" | "CANCELLED"; saleReference: string }>(
+        `/payments/status/${encodeURIComponent(saleReference)}`
+      ),
+    confirm: (data: {
+      saleReference: string;
+      items: { produitId: number; quantite: number }[];
+    }) =>
+      request<{ message: string; saleReference: string }>(
+        "/payments/confirm",
+        { method: "POST", body: JSON.stringify(data) }
+      ),
+    cancel: (saleReference: string) =>
+      request<{ message: string; saleReference: string }>(
+        "/payments/cancel",
+        { method: "POST", body: JSON.stringify({ saleReference }) }
+      ),
+  },
 };

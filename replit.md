@@ -43,10 +43,18 @@ artifacts-monorepo/
 - Mot de passe (1234) requis pour les 2 sections
 
 ### Caisse
-- Choix du mode de paiement : Cash ou Carte Bancaire
+- Choix du mode de paiement : Cash ou Carte Bancaire (SumUp Terminal)
 - Enregistrement des sessions avec date, heure et localisation GPS
 - Affichage du stock en temps réel
 - Enregistrement rapide des ventes (- 1 paire) ou via modal
+
+### SumUp Terminal Payments
+- OAuth 2.0 client_credentials (SUMUP_CLIENT_ID, SUMUP_CLIENT_SECRET dans env vars)
+- Credentials: Application "LNT" id CCCYRSG47
+- DB tables: sumup_checkouts, payment_logs (traçabilité complète)
+- Routes: POST /api/payments/create, GET /api/payments/status/:ref, POST /api/payments/confirm, POST /api/payments/cancel
+- SUMUP_READER_ID (env var, vide par défaut) → à configurer avec le serial du terminal physique
+- Polling frontend toutes les 3s, timeout 3 minutes
 
 ### Inventaire
 - Gestion des collections (Santorini, Riviera, etc.)

@@ -1,0 +1,171 @@
+Intégrer SumUp Terminal Payments dans mon application de caisse LNT Paris pour accepter les paiements par carte bancaire sur terminal physique.
+
+Objectif :
+Quand le vendeur confirme une vente et choisit “Carte bancaire”, l’application doit envoyer le montant de la transaction à SumUp pour l’afficher sur le terminal, permettre au client de payer, puis, uniquement si le paiement est réussi, enregistrer la vente dans SumUp et dans mon application, mettre à jour le stock, la caisse et le reporting.
+
+Architecture demandée :
+- Frontend de caisse
+- Backend sécurisé
+- Intégration SumUp Terminal Payments / Cloud API
+- Le frontend ne doit jamais appeler SumUp directement
+- Le backend doit appeler SumUp avec la clé secrète stockée dans les variables d’environnement
+- Utiliser une référence unique par vente pour éviter les doublons et faciliter la réconciliation
+
+Important :
+- Si l’application encaisse pour mon propre compte SumUp, utiliser l’authentification backend adaptée à l’API SumUp avec secret API key côté serveur
+- Si une affiliate key est nécessaire pour identifier l’intégration terminal, la prévoir côté configuration backend
+- Ne jamais exposer la clé secrète SumUp dans le frontend, mobile ou web
+
+Flux métier attendu :
+
+1. Création de la vente
+- Le vendeur clique sur “Faire une vente”
+- Il ajoute les produits au panier
+- Les promotions se calculent normalement
+- Juste avant la confirmation, il choisit le mode de paiement :
+  - Cash
+  - Carte bancaire
+
+2. Paiement carte avec SumUp
+Si le vendeur choisit “Carte bancaire” :
+- appeler le backend pour créer une transaction SumUp Terminal Payments
+- envoyer à SumUp :
+  - le montant total
+  - la devise EUR
+  - une référence unique de vente
+  - une description de la vente
+  - toutes les informations nécessaires pour afficher le montant sur le terminal
+- afficher côté caisse un état visuel :
+  “Paiement en cours sur le terminal SumUp…”
+
+3. Validation du paiement
+- attendre le retour réel du paiement depuis SumUp
+- vérifier le statut final de la transaction
+- ne jamais confirmer la vente localement tant que SumUp n’a pas confirmé un succès
+
+4. Si le paiement SumUp est réussi
+Alors :
+- enregistrer définitivement la vente dans ma base locale
+- enregistrer les lignes produits vendues
+- enregistrer les identifiants SumUp de la transaction
+- décrémenter le stock
+- mettre à jour :
+  - total cash / carte / total général
+  - ventes du jour
+  - paires vendues
+  - dernière vente
+  - transactions du jour
+  - reporting
+- vider le panier
+- afficher un message :
+  “Paiement réussi”
+
+5. Si le paiement échoue, est annulé ou expire
+Alors :
+- ne pas enregistrer la vente comme payée
+- ne pas décrémenter le stock
+- ne pas vider le panier
+- afficher un message clair :
+  “Paiement annulé ou échoué”
+- laisser le vendeur revenir au panier
+
+6. Enregistrement obligatoire dans SumUp et dans mon application
+Je veux une traçabilité complète à deux niveaux :
+
+A. Dans SumUp
+- la transaction doit être créée et exécutée via SumUp
+- elle doit apparaître dans l’historique SumUp avec une référence unique de vente
+
+B. Dans ma base locale
+Pour chaque paiement carte, enregistrer au minimum :
+- sale_reference
+- payment_method = "card"
+- payment_status
+- amount
+- currency = "EUR"
+- sumup_checkout_id ou identifiant équivalent retourné
+- sumup_transaction_id si disponible
+- paid_at
+- raw_sumup_response en JSON pour audit/debug
+
+7. Structure de base de données à prévoir
+
+Table sales
+- id
+- sale_reference
+- amount
+- currency
+- payment_method
+- payment_status
+- sumup_checkout_id
+- sumup_transaction_id
+- paid_at
+- created_at
+
+Table sale_items
+- id
+- sale_id
+- product_id
+- quantity
+- unit_price
+- total_price
+
+Table payment_logs
+- id
+- sale_reference
+- provider = "sumup"
+- request_payload
+- response_payload
+- status
+- created_at
+
+8. Endpoints backend à créer
+
+- POST /api/payments/sumup/create
+  Crée la transaction SumUp pour le montant du panier
+
+- GET /api/payments/sumup/status/:id
+  Vérifie le statut réel de la transaction SumUp
+
+- POST /api/sales/confirm-card-sale
+  Confirme la vente locale seulement si le paiement SumUp est validé
+
+- POST /api/sales/cancel-card-sale
+  Gère proprement un paiement annulé ou échoué
+
+9. Sécurité et robustesse
+- stocker la clé secrète SumUp uniquement dans les variables d’environnement backend
+- empêcher tout double clic / double paiement
+- utiliser une référence externe unique pour chaque transaction
+- gérer les cas suivants :
+  - timeout réseau
+  - retour SumUp lent
+  - paiement accepté sur le terminal mais frontend interrompu
+  - rechargement de page
+  - tentative de double confirmation
+- au redémarrage ou rechargement, être capable de relire le statut de la transaction côté backend avant de valider localement
+
+10. UX demandée
+Dans la caisse :
+- afficher “Paiement en cours sur le terminal…”
+- désactiver le bouton de confirmation pendant le paiement
+- afficher ensuite l’état :
+  - payé
+  - annulé
+  - échoué
+- après succès, afficher éventuellement la référence SumUp
+
+11. Objectif final
+Je veux ce flux exact :
+
+Faire une vente
+→ Ajouter les produits au panier
+→ Choisir “Carte bancaire”
+→ Envoyer le montant à SumUp
+→ Afficher le montant sur le terminal
+→ Encaisser le paiement
+→ Vérifier le statut réel du paiement
+→ Enregistrer la transaction dans SumUp
+→ Enregistrer la vente dans mon application
+→ Déduire le stock
+→ Mettre à jour la caisse et le reporting

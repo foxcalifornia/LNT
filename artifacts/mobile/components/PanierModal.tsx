@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,7 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
 import {
   cartTotalCentimes,
   cartTotalItems,
@@ -23,6 +23,10 @@ import {
 } from "@/lib/cart";
 
 const COLORS = Colors.light;
+const POLL_INTERVAL_MS = 3000;
+const MAX_POLL_MS = 3 * 60 * 1000;
+
+type TerminalState = "idle" | "creating" | "waiting" | "paid" | "failed" | "cancelled";
 
 type Props = {
   visible: boolean;
@@ -31,9 +35,10 @@ type Props = {
   onCartChange: (cart: CartItem[]) => void;
   onClose: () => void;
   onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
+  onRefreshAfterVente: () => Promise<void>;
 };
 
-export function PanierModal({ visible, cart, collections, onCartChange, onClose, onVente }: Props) {
+export function PanierModal({ visible, cart, collections, onCartChange, onClose, onVente, onRefreshAfterVente }: Props) {
   const insets = useSafeAreaInsets();
   const [editingProduitId, setEditingProduitId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,19 +46,97 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
   const [successMode, setSuccessMode] = useState<"cash" | "carte" | null>(null);
   const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number } | null>(null);
 
+  const [terminalState, setTerminalState] = useState<TerminalState>("idle");
+  const [saleReference, setSaleReference] = useState<string | null>(null);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollStartRef = useRef<number>(0);
+  const cartSnapshotRef = useRef<CartItem[]>([]);
+
   const promo = computePromo(cart);
   const totalItems = cartTotalItems(cart);
   const totalCentimes = cartTotalCentimes(cart);
   const totalFinal = totalCentimes - promo.discountCentimes;
   const hasPromo = promo.nbFree > 0;
 
-  const handlePay = async (mode: "cash" | "carte") => {
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!visible) {
+      stopPolling();
+      setTerminalState("idle");
+      setSaleReference(null);
+      setTerminalError(null);
+    }
+  }, [visible]);
+
+  useEffect(() => () => stopPolling(), []);
+
+  const startPolling = (ref: string, snap: CartItem[]) => {
+    pollStartRef.current = Date.now();
+    cartSnapshotRef.current = snap;
+
+    pollIntervalRef.current = setInterval(async () => {
+      if (Date.now() - pollStartRef.current > MAX_POLL_MS) {
+        stopPolling();
+        setTerminalState("failed");
+        setTerminalError("Délai d'attente dépassé (3 min). Vérifiez le terminal SumUp.");
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        return;
+      }
+
+      try {
+        const result = await api.payments.getStatus(ref);
+        if (result.status === "PAID") {
+          stopPolling();
+          try {
+            await api.payments.confirm({
+              saleReference: ref,
+              items: cartSnapshotRef.current.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })),
+            });
+            await onRefreshAfterVente();
+            setTerminalState("paid");
+            setSuccessMode("carte");
+            setSuccessSnapshot({ items: cartTotalItems(cartSnapshotRef.current), total: totalFinal });
+            setSuccess(true);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            setTimeout(() => {
+              setSuccess(false);
+              setSuccessMode(null);
+              setSuccessSnapshot(null);
+              setTerminalState("idle");
+              setSaleReference(null);
+              onCartChange([]);
+              onClose();
+            }, 2000);
+          } catch (confirmErr) {
+            setTerminalState("failed");
+            setTerminalError(`Erreur confirmation: ${(confirmErr as Error).message}`);
+          }
+        } else if (result.status === "FAILED" || result.status === "CANCELLED") {
+          stopPolling();
+          setTerminalState(result.status === "CANCELLED" ? "cancelled" : "failed");
+          setTerminalError("Paiement annulé ou refusé par le terminal.");
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+      } catch {
+      }
+    }, POLL_INTERVAL_MS);
+  };
+
+  const handleCashPay = async () => {
     if (cart.length === 0 || loading) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setLoading(true);
     try {
-      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), mode);
-      setSuccessMode(mode);
+      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), "cash");
+      setSuccessMode("cash");
       setSuccessSnapshot({ items: totalItems, total: totalFinal });
       setSuccess(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -70,15 +153,51 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     }
   };
 
+  const handleCardPay = async () => {
+    if (cart.length === 0 || terminalState !== "idle") return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setTerminalState("creating");
+    setTerminalError(null);
+    const snap = [...cart];
+
+    try {
+      const result = await api.payments.create({
+        montantCentimes: totalFinal,
+        description: `LNT Paris – ${totalItems} paire${totalItems > 1 ? "s" : ""}`,
+        items: snap.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })),
+      });
+      setSaleReference(result.saleReference);
+      setTerminalState("waiting");
+      startPolling(result.saleReference, snap);
+    } catch (err) {
+      setTerminalState("failed");
+      setTerminalError((err as Error).message ?? "Impossible de contacter SumUp");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+  };
+
+  const handleCancelTerminal = async () => {
+    stopPolling();
+    if (saleReference) {
+      try { await api.payments.cancel(saleReference); } catch {}
+    }
+    setTerminalState("idle");
+    setSaleReference(null);
+    setTerminalError(null);
+  };
+
+  const handleRetryOrBack = () => {
+    setTerminalState("idle");
+    setSaleReference(null);
+    setTerminalError(null);
+  };
+
   const updateQty = (produitId: number, delta: number) => {
     Haptics.selectionAsync();
     const item = cart.find((i) => i.produit.id === produitId);
     if (!item) return;
     const next = item.quantite + delta;
-    if (next <= 0) {
-      confirmDelete(produitId);
-      return;
-    }
+    if (next <= 0) { confirmDelete(produitId); return; }
     const capped = Math.min(next, item.produit.quantite);
     onCartChange(cart.map((i) => i.produit.id === produitId ? { ...i, quantite: capped } : i));
   };
@@ -88,8 +207,7 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     Alert.alert("Supprimer l'article ?", "Cet article sera retiré du panier.", [
       { text: "Annuler", style: "cancel" },
       {
-        text: "Supprimer",
-        style: "destructive",
+        text: "Supprimer", style: "destructive",
         onPress: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setEditingProduitId(null);
@@ -107,14 +225,10 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     let newCart: CartItem[];
     if (alreadyInCart) {
       const merged = Math.min(alreadyInCart.quantite + oldItem.quantite, newProduit.quantite);
-      newCart = cart
-        .filter((i) => i.produit.id !== oldProduitId)
-        .map((i) => i.produit.id === newProduit.id ? { ...i, quantite: merged } : i);
+      newCart = cart.filter((i) => i.produit.id !== oldProduitId).map((i) => i.produit.id === newProduit.id ? { ...i, quantite: merged } : i);
     } else {
       const qty = Math.min(oldItem.quantite, newProduit.quantite);
-      newCart = cart
-        .filter((i) => i.produit.id !== oldProduitId)
-        .concat([{ produit: newProduit, quantite: qty }]);
+      newCart = cart.filter((i) => i.produit.id !== oldProduitId).concat([{ produit: newProduit, quantite: qty }]);
     }
     onCartChange(newCart);
     setEditingProduitId(null);
@@ -125,21 +239,92 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     setEditingProduitId((prev) => (prev === produitId ? null : produitId));
   };
 
+  const isInTerminalFlow = terminalState !== "idle";
   const successColor = successMode === "carte" ? COLORS.card_payment : COLORS.cash;
 
+  const renderTerminalView = () => {
+    if (terminalState === "creating") {
+      return (
+        <View style={styles.terminalContainer}>
+          <ActivityIndicator size="large" color={COLORS.card_payment} style={{ marginBottom: 20 }} />
+          <Text style={styles.terminalTitle}>Connexion au terminal…</Text>
+          <Text style={styles.terminalSub}>Envoi de la demande de paiement à SumUp</Text>
+          <Text style={styles.terminalAmount}>{formatPrix(totalFinal)}</Text>
+        </View>
+      );
+    }
+
+    if (terminalState === "waiting") {
+      return (
+        <View style={styles.terminalContainer}>
+          <View style={[styles.terminalIcon, { backgroundColor: COLORS.card_payment + "15" }]}>
+            <Feather name="credit-card" size={42} color={COLORS.card_payment} />
+          </View>
+          <Text style={styles.terminalTitle}>Paiement en attente</Text>
+          <Text style={styles.terminalSub}>Montant affiché sur le terminal SumUp</Text>
+          <Text style={styles.terminalAmount}>{formatPrix(totalFinal)}</Text>
+          <View style={styles.terminalPulseDot}>
+            <ActivityIndicator size="small" color={COLORS.card_payment} />
+            <Text style={styles.terminalPulseText}>En attente du client…</Text>
+          </View>
+          {saleReference && (
+            <Text style={styles.terminalRef}>Réf : {saleReference}</Text>
+          )}
+          <Pressable style={styles.terminalCancelBtn} onPress={handleCancelTerminal}>
+            <Feather name="x-circle" size={16} color={COLORS.danger} />
+            <Text style={styles.terminalCancelText}>Annuler le paiement</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    if (terminalState === "failed" || terminalState === "cancelled") {
+      return (
+        <View style={styles.terminalContainer}>
+          <View style={[styles.terminalIcon, { backgroundColor: COLORS.danger + "15" }]}>
+            <Feather name="alert-circle" size={42} color={COLORS.danger} />
+          </View>
+          <Text style={[styles.terminalTitle, { color: COLORS.danger }]}>
+            {terminalState === "cancelled" ? "Paiement annulé" : "Paiement échoué"}
+          </Text>
+          <Text style={styles.terminalSub}>
+            {terminalError ?? "Le paiement n'a pas abouti. Le panier est conservé."}
+          </Text>
+          <Pressable style={styles.terminalRetryBtn} onPress={handleRetryOrBack}>
+            <Feather name="arrow-left" size={16} color={COLORS.card_payment} />
+            <Text style={styles.terminalRetryText}>Retour au panier</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    return null;
+  };
+
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={isInTerminalFlow ? undefined : onClose}>
       <View style={[styles.overlay, { paddingTop: insets.top, paddingBottom: Math.max(insets.bottom, 24) }]}>
         <View style={styles.sheet}>
 
           <View style={styles.header}>
-            <View style={{ width: 36 }} />
+            {isInTerminalFlow ? (
+              <View style={{ width: 36 }} />
+            ) : (
+              <View style={{ width: 36 }} />
+            )}
             <Text style={styles.title}>
-              Panier{totalItems > 0 ? ` · ${totalItems} article${totalItems > 1 ? "s" : ""}` : ""}
+              {isInTerminalFlow
+                ? terminalState === "waiting" ? "Terminal SumUp"
+                  : terminalState === "creating" ? "SumUp"
+                  : "Paiement"
+                : `Panier${totalItems > 0 ? ` · ${totalItems} article${totalItems > 1 ? "s" : ""}` : ""}`}
             </Text>
-            <Pressable onPress={onClose} style={styles.closeBtn}>
-              <Feather name="x" size={18} color={COLORS.textSecondary} />
-            </Pressable>
+            {!isInTerminalFlow && (
+              <Pressable onPress={onClose} style={styles.closeBtn}>
+                <Feather name="x" size={18} color={COLORS.textSecondary} />
+              </Pressable>
+            )}
+            {isInTerminalFlow && <View style={{ width: 36 }} />}
           </View>
 
           {success ? (
@@ -155,10 +340,12 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
               <View style={[styles.successModeBadge, { backgroundColor: successColor + "15", borderColor: successColor + "30" }]}>
                 <Feather name={successMode === "carte" ? "credit-card" : "dollar-sign"} size={14} color={successColor} />
                 <Text style={[styles.successModeText, { color: successColor }]}>
-                  Paiement {successMode === "carte" ? "Carte Bancaire" : "Cash"}
+                  Paiement {successMode === "carte" ? "Carte Bancaire · SumUp" : "Cash"}
                 </Text>
               </View>
             </View>
+          ) : isInTerminalFlow ? (
+            renderTerminalView()
           ) : cart.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Feather name="shopping-cart" size={44} color={COLORS.border} />
@@ -316,7 +503,7 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                 <View style={styles.payRow}>
                   <Pressable
                     style={[styles.payBtn, { backgroundColor: COLORS.cash }, loading && { opacity: 0.6 }]}
-                    onPress={() => handlePay("cash")}
+                    onPress={handleCashPay}
                     disabled={loading}
                   >
                     {loading ? (
@@ -329,18 +516,11 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                     )}
                   </Pressable>
                   <Pressable
-                    style={[styles.payBtn, { backgroundColor: COLORS.card_payment }, loading && { opacity: 0.6 }]}
-                    onPress={() => handlePay("carte")}
-                    disabled={loading}
+                    style={[styles.payBtn, { backgroundColor: COLORS.card_payment }]}
+                    onPress={handleCardPay}
                   >
-                    {loading ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <>
-                        <Feather name="credit-card" size={17} color="#fff" />
-                        <Text style={styles.payBtnText}>Payer Carte</Text>
-                      </>
-                    )}
+                    <Feather name="credit-card" size={17} color="#fff" />
+                    <Text style={styles.payBtnText}>Payer Carte</Text>
                   </Pressable>
                 </View>
               </View>
@@ -383,6 +563,57 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     borderWidth: 1, borderColor: COLORS.border,
     justifyContent: "center", alignItems: "center",
+  },
+
+  terminalContainer: {
+    flex: 1, alignItems: "center", justifyContent: "center",
+    paddingHorizontal: 32, gap: 14,
+  },
+  terminalIcon: {
+    width: 96, height: 96, borderRadius: 48,
+    justifyContent: "center", alignItems: "center", marginBottom: 4,
+  },
+  terminalTitle: {
+    fontSize: 22, fontFamily: "Inter_700Bold", color: COLORS.text,
+    textAlign: "center", letterSpacing: -0.5,
+  },
+  terminalSub: {
+    fontSize: 14, fontFamily: "Inter_400Regular", color: COLORS.textSecondary,
+    textAlign: "center", lineHeight: 20,
+  },
+  terminalAmount: {
+    fontSize: 36, fontFamily: "Inter_700Bold", color: COLORS.card_payment,
+    letterSpacing: -1, marginVertical: 4,
+  },
+  terminalPulseDot: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: COLORS.card_payment + "10", borderRadius: 20,
+    paddingHorizontal: 16, paddingVertical: 10, marginTop: 4,
+  },
+  terminalPulseText: {
+    fontSize: 13, fontFamily: "Inter_500Medium", color: COLORS.card_payment,
+  },
+  terminalRef: {
+    fontSize: 11, fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary, letterSpacing: 0.3, marginTop: 4,
+  },
+  terminalCancelBtn: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    marginTop: 24, paddingHorizontal: 20, paddingVertical: 12,
+    borderWidth: 1.5, borderColor: COLORS.danger + "40",
+    borderRadius: 14, backgroundColor: COLORS.danger + "08",
+  },
+  terminalCancelText: {
+    fontSize: 14, fontFamily: "Inter_600SemiBold", color: COLORS.danger,
+  },
+  terminalRetryBtn: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    marginTop: 24, paddingHorizontal: 20, paddingVertical: 12,
+    borderWidth: 1.5, borderColor: COLORS.card_payment + "40",
+    borderRadius: 14, backgroundColor: COLORS.card_payment + "08",
+  },
+  terminalRetryText: {
+    fontSize: 14, fontFamily: "Inter_600SemiBold", color: COLORS.card_payment,
   },
 
   successContainer: {
@@ -523,14 +754,15 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: COLORS.border, gap: 10,
   },
   footerHint: {
-    fontSize: 11, fontFamily: "Inter_600SemiBold",
-    color: COLORS.textSecondary, textTransform: "uppercase",
-    letterSpacing: 1, textAlign: "center",
+    fontSize: 11, fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary, textAlign: "center",
+    textTransform: "uppercase", letterSpacing: 0.6,
   },
   payRow: { flexDirection: "row", gap: 10 },
   payBtn: {
     flex: 1, flexDirection: "row", alignItems: "center",
-    justifyContent: "center", gap: 8, paddingVertical: 15, borderRadius: 14,
+    justifyContent: "center", gap: 8,
+    borderRadius: 16, paddingVertical: 16,
   },
-  payBtnText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff", letterSpacing: -0.2 },
+  payBtnText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff" },
 });

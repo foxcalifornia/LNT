@@ -1,0 +1,259 @@
+import { Router, type IRouter } from "express";
+import crypto from "node:crypto";
+import { db } from "@workspace/db";
+import { sumupCheckoutsTable, paymentLogsTable, ventesTable, produitsTable } from "@workspace/db/schema";
+import { eq } from "drizzle-orm";
+import {
+  createSumUpCheckout,
+  sendCheckoutToReader,
+  getSumUpCheckoutStatus,
+  deleteSumUpCheckout,
+} from "../lib/sumup";
+
+const router: IRouter = Router();
+
+async function logPayment(opts: {
+  saleReference: string;
+  action: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  statut?: string;
+}) {
+  await db.insert(paymentLogsTable).values({
+    saleReference: opts.saleReference,
+    action: opts.action,
+    requestPayload: opts.requestPayload ? JSON.stringify(opts.requestPayload) : null,
+    responsePayload: opts.responsePayload ? JSON.stringify(opts.responsePayload) : null,
+    statut: opts.statut ?? null,
+  }).catch(() => {});
+}
+
+router.post("/create", async (req, res) => {
+  try {
+    const { montantCentimes, description, items } = req.body as {
+      montantCentimes: number;
+      description?: string;
+      items: { produitId: number; quantite: number }[];
+    };
+
+    if (!montantCentimes || montantCentimes <= 0) {
+      res.status(400).json({ error: "Montant invalide" });
+      return;
+    }
+    if (!items || items.length === 0) {
+      res.status(400).json({ error: "Panier vide" });
+      return;
+    }
+
+    const saleReference = `LNT-${Date.now()}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+    const amountEur = montantCentimes / 100;
+    const desc = description ?? `LNT Paris - ${items.length} article(s)`;
+
+    await logPayment({ saleReference, action: "create_start", requestPayload: { montantCentimes, items } });
+
+    const checkout = await createSumUpCheckout({
+      amountEur,
+      currency: "EUR",
+      reference: saleReference,
+      description: desc,
+    });
+
+    await logPayment({ saleReference, action: "checkout_created", responsePayload: checkout, statut: checkout.status });
+
+    await db.insert(sumupCheckoutsTable).values({
+      saleReference,
+      sumupCheckoutId: checkout.id,
+      montantCentimes,
+      statut: "PENDING",
+    });
+
+    const readerId = process.env["SUMUP_READER_ID"];
+    if (readerId) {
+      try {
+        await sendCheckoutToReader(readerId, checkout.id);
+        await logPayment({ saleReference, action: "sent_to_reader", statut: "OK" });
+      } catch (readerErr) {
+        req.log.warn({ err: readerErr }, "sendToReader failed — checkout created but not sent to reader");
+        await logPayment({ saleReference, action: "sent_to_reader_error", statut: "ERROR", responsePayload: String(readerErr) });
+      }
+    }
+
+    res.status(201).json({
+      saleReference,
+      checkoutId: checkout.id,
+      readerEnvoyé: !!readerId,
+    });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: String((err as Error).message) });
+  }
+});
+
+router.get("/status/:saleReference", async (req, res) => {
+  try {
+    const { saleReference } = req.params;
+
+    const [record] = await db
+      .select()
+      .from(sumupCheckoutsTable)
+      .where(eq(sumupCheckoutsTable.saleReference, saleReference));
+
+    if (!record) {
+      res.status(404).json({ error: "Référence de paiement introuvable" });
+      return;
+    }
+
+    if (record.statut === "CONFIRMED") {
+      res.json({ status: "PAID", saleReference, confirmedLocally: true });
+      return;
+    }
+
+    if (!record.sumupCheckoutId) {
+      res.json({ status: record.statut, saleReference });
+      return;
+    }
+
+    const sumupStatus = await getSumUpCheckoutStatus(record.sumupCheckoutId);
+    await logPayment({ saleReference, action: "status_poll", responsePayload: { status: sumupStatus.status }, statut: sumupStatus.status });
+
+    const normalized = sumupStatus.status.toUpperCase();
+    const dbStatut = normalized === "PAID" ? "PAID"
+      : normalized === "FAILED" || normalized === "EXPIRED" ? "FAILED"
+      : "PENDING";
+
+    if (dbStatut !== record.statut) {
+      await db
+        .update(sumupCheckoutsTable)
+        .set({
+          statut: dbStatut,
+          sumupTransactionId: sumupStatus.transaction_id ?? null,
+          rawResponse: JSON.stringify(sumupStatus.raw),
+          ...(dbStatut === "PAID" ? { paidAt: new Date() } : {}),
+        })
+        .where(eq(sumupCheckoutsTable.saleReference, saleReference));
+    }
+
+    res.json({ status: dbStatut, saleReference, checkoutId: record.sumupCheckoutId });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: String((err as Error).message) });
+  }
+});
+
+router.post("/confirm", async (req, res) => {
+  try {
+    const { saleReference, items } = req.body as {
+      saleReference: string;
+      items: { produitId: number; quantite: number }[];
+    };
+
+    if (!saleReference || !items || items.length === 0) {
+      res.status(400).json({ error: "Données manquantes" });
+      return;
+    }
+
+    const [record] = await db
+      .select()
+      .from(sumupCheckoutsTable)
+      .where(eq(sumupCheckoutsTable.saleReference, saleReference));
+
+    if (!record) {
+      res.status(404).json({ error: "Référence de paiement introuvable" });
+      return;
+    }
+
+    if (record.confirmedLocally === 1) {
+      res.json({ message: "Vente déjà enregistrée", saleReference });
+      return;
+    }
+
+    if (record.statut !== "PAID") {
+      let actualStatus = record.statut;
+      if (record.sumupCheckoutId) {
+        const sumupStatus = await getSumUpCheckoutStatus(record.sumupCheckoutId);
+        actualStatus = sumupStatus.status.toUpperCase() === "PAID" ? "PAID" : sumupStatus.status.toUpperCase();
+      }
+      if (actualStatus !== "PAID") {
+        res.status(402).json({ error: `Paiement non confirmé par SumUp (statut: ${actualStatus})` });
+        return;
+      }
+      await db.update(sumupCheckoutsTable)
+        .set({ statut: "PAID", paidAt: new Date() })
+        .where(eq(sumupCheckoutsTable.saleReference, saleReference));
+    }
+
+    for (const item of items) {
+      const [produit] = await db
+        .select({ quantite: produitsTable.quantite, prixCentimes: produitsTable.prixCentimes })
+        .from(produitsTable)
+        .where(eq(produitsTable.id, item.produitId));
+
+      if (!produit) continue;
+
+      const montantCentimes = produit.prixCentimes * item.quantite;
+
+      await db.insert(ventesTable).values({
+        produitId: item.produitId,
+        quantiteVendue: item.quantite,
+        typePaiement: "CARTE",
+        montantCentimes,
+      });
+
+      await db.update(produitsTable)
+        .set({ quantite: Math.max(0, produit.quantite - item.quantite) })
+        .where(eq(produitsTable.id, item.produitId));
+    }
+
+    await db.update(sumupCheckoutsTable)
+      .set({ statut: "CONFIRMED", confirmedLocally: 1 })
+      .where(eq(sumupCheckoutsTable.saleReference, saleReference));
+
+    await logPayment({ saleReference, action: "confirmed_locally", statut: "CONFIRMED" });
+
+    res.json({ message: "Vente enregistrée avec succès", saleReference });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: String((err as Error).message) });
+  }
+});
+
+router.post("/cancel", async (req, res) => {
+  try {
+    const { saleReference } = req.body as { saleReference: string };
+
+    const [record] = await db
+      .select()
+      .from(sumupCheckoutsTable)
+      .where(eq(sumupCheckoutsTable.saleReference, saleReference));
+
+    if (!record) {
+      res.status(404).json({ error: "Référence introuvable" });
+      return;
+    }
+
+    if (record.confirmedLocally === 1) {
+      res.status(409).json({ error: "Paiement déjà confirmé, annulation impossible" });
+      return;
+    }
+
+    if (record.sumupCheckoutId) {
+      try {
+        await deleteSumUpCheckout(record.sumupCheckoutId);
+      } catch {
+      }
+    }
+
+    await db.update(sumupCheckoutsTable)
+      .set({ statut: "CANCELLED" })
+      .where(eq(sumupCheckoutsTable.saleReference, saleReference));
+
+    await logPayment({ saleReference, action: "cancelled", statut: "CANCELLED" });
+
+    res.json({ message: "Paiement annulé", saleReference });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: String((err as Error).message) });
+  }
+});
+
+export default router;

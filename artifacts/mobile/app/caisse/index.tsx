@@ -285,6 +285,12 @@ export default function CaisseScreen() {
         onCartChange={setCart}
         onClose={() => setShowPanier(false)}
         onVente={handleVente}
+        onRefreshAfterVente={async () => {
+          await Promise.all([
+            refetchCollections(),
+            queryClient.refetchQueries({ queryKey: ["ventesJour"] }),
+          ]);
+        }}
       />
     </View>
   );
