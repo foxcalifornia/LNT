@@ -15,6 +15,7 @@ export const produitsTable = pgTable("produits", {
   couleur: text("couleur").notNull(),
   quantite: integer("quantite").notNull().default(0),
   prixCentimes: integer("prix_centimes").notNull().default(0),
+  stockMinimum: integer("stock_minimum").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

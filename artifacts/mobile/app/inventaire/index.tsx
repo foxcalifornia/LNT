@@ -22,11 +22,14 @@ import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/li
 
 const COLORS = Colors.light;
 
+type ActiveTab = "collections" | "alertes";
+
 export default function InventaireScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const [showAddCollection, setShowAddCollection] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("collections");
 
   const { data: collections = [], isLoading, refetch, isRefetching } = useQuery({
     queryKey: ["collections"],
@@ -62,6 +65,16 @@ export default function InventaireScreen() {
     0
   );
 
+  const alertCount = collections.reduce(
+    (sum, c) => sum + c.produits.filter((p) => p.stockMinimum > 0 && p.quantite < p.stockMinimum).length,
+    0
+  );
+
+  const switchTab = (tab: ActiveTab) => {
+    Haptics.selectionAsync();
+    setActiveTab(tab);
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
@@ -86,10 +99,42 @@ export default function InventaireScreen() {
         <StatCard label="Total Paires" value={totalPaires} icon="package" />
       </View>
 
+      <View style={styles.tabBar}>
+        <Pressable
+          style={[styles.tabBtn, activeTab === "collections" && styles.tabBtnActive]}
+          onPress={() => switchTab("collections")}
+        >
+          <Feather name="layers" size={15} color={activeTab === "collections" ? COLORS.accent : COLORS.textSecondary} />
+          <Text style={[styles.tabBtnText, activeTab === "collections" && styles.tabBtnTextActive]}>
+            Collections
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tabBtn, activeTab === "alertes" && styles.tabBtnActive]}
+          onPress={() => switchTab("alertes")}
+        >
+          <Feather name="alert-triangle" size={15} color={activeTab === "alertes" ? "#F59E0B" : COLORS.textSecondary} />
+          <Text style={[styles.tabBtnText, activeTab === "alertes" && { color: "#F59E0B", fontFamily: "Inter_700Bold" }]}>
+            Alertes
+          </Text>
+          {alertCount > 0 && (
+            <View style={styles.alertBadge}>
+              <Text style={styles.alertBadgeText}>{alertCount}</Text>
+            </View>
+          )}
+        </Pressable>
+      </View>
+
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator color={COLORS.accent} size="large" />
         </View>
+      ) : activeTab === "alertes" ? (
+        <AlertesView
+          collections={collections}
+          isRefetching={isRefetching}
+          onRefresh={refetch}
+        />
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -256,42 +301,64 @@ type ProduitRowProps = {
 
 function ProduitRow({ produit, onDelete }: ProduitRowProps) {
   const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
+  const [editMode, setEditMode] = useState<"none" | "qty" | "min">("none");
   const [newQty, setNewQty] = useState(String(produit.quantite));
+  const [newMin, setNewMin] = useState(String(produit.stockMinimum));
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, quantite }: { id: number; quantite: number }) =>
-      api.inventory.updateProduit(id, { quantite }),
+    mutationFn: (data: { quantite?: number; stockMinimum?: number }) =>
+      api.inventory.updateProduit(produit.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["collections"] });
-      setEditing(false);
+      setEditMode("none");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
   });
 
-  const handleSave = () => {
+  const handleSaveQty = () => {
     const qty = parseInt(newQty);
-    if (isNaN(qty) || qty < 0) {
-      Alert.alert("Erreur", "Quantité invalide");
-      return;
-    }
-    updateMutation.mutate({ id: produit.id, quantite: qty });
+    if (isNaN(qty) || qty < 0) { Alert.alert("Erreur", "Quantité invalide"); return; }
+    updateMutation.mutate({ quantite: qty });
+  };
+
+  const handleSaveMin = () => {
+    const min = parseInt(newMin);
+    if (isNaN(min) || min < 0) { Alert.alert("Erreur", "Valeur invalide"); return; }
+    updateMutation.mutate({ stockMinimum: min });
   };
 
   const isLow = produit.quantite <= 2 && produit.quantite > 0;
   const isEmpty = produit.quantite === 0;
+  const hasMin = produit.stockMinimum > 0;
+  const belowMin = hasMin && produit.quantite < produit.stockMinimum;
+  const manque = belowMin ? produit.stockMinimum - produit.quantite : 0;
 
   return (
-    <View style={styles.produitRow}>
+    <View style={[styles.produitRow, belowMin && styles.produitRowAlert]}>
       <View style={[styles.produitDot, { backgroundColor: getColorHex(produit.couleur) }]} />
       <View style={{ flex: 1 }}>
         <Text style={styles.produitCouleur}>{produit.couleur}</Text>
-        {produit.prixCentimes > 0 && (
-          <Text style={styles.produitPrix}>{formatPrix(produit.prixCentimes)}</Text>
-        )}
+        <View style={{ flexDirection: "row", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {produit.prixCentimes > 0 && (
+            <Text style={styles.produitPrix}>{formatPrix(produit.prixCentimes)}</Text>
+          )}
+          {hasMin && (
+            <View style={[styles.minBadge, belowMin ? styles.minBadgeAlert : styles.minBadgeOk]}>
+              <Feather
+                name={belowMin ? "alert-triangle" : "check"}
+                size={9}
+                color={belowMin ? "#F59E0B" : COLORS.success}
+              />
+              <Text style={[styles.minBadgeText, { color: belowMin ? "#F59E0B" : COLORS.success }]}>
+                {belowMin ? `+${manque} requis` : `min. ${produit.stockMinimum}`}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
+
       <View style={styles.produitActions}>
-        {editing ? (
+        {editMode === "qty" ? (
           <View style={styles.editRow}>
             <TextInput
               style={styles.qtyInput}
@@ -301,18 +368,30 @@ function ProduitRow({ produit, onDelete }: ProduitRowProps) {
               autoFocus
               selectTextOnFocus
             />
-            <Pressable
-              style={styles.saveBtn}
-              onPress={handleSave}
-              disabled={updateMutation.isPending}
-            >
-              {updateMutation.isPending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Feather name="check" size={14} color="#fff" />
-              )}
+            <Pressable style={styles.saveBtn} onPress={handleSaveQty} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="check" size={14} color="#fff" />}
             </Pressable>
-            <Pressable style={styles.cancelEditBtn} onPress={() => setEditing(false)}>
+            <Pressable style={styles.cancelEditBtn} onPress={() => setEditMode("none")}>
+              <Feather name="x" size={14} color={COLORS.textSecondary} />
+            </Pressable>
+          </View>
+        ) : editMode === "min" ? (
+          <View style={styles.editRow}>
+            <View style={styles.minInputWrapper}>
+              <Text style={styles.minInputLabel}>min</Text>
+              <TextInput
+                style={styles.qtyInput}
+                value={newMin}
+                onChangeText={setNewMin}
+                keyboardType="number-pad"
+                autoFocus
+                selectTextOnFocus
+              />
+            </View>
+            <Pressable style={[styles.saveBtn, { backgroundColor: "#F59E0B" }]} onPress={handleSaveMin} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="check" size={14} color="#fff" />}
+            </Pressable>
+            <Pressable style={styles.cancelEditBtn} onPress={() => setEditMode("none")}>
               <Feather name="x" size={14} color={COLORS.textSecondary} />
             </Pressable>
           </View>
@@ -320,18 +399,21 @@ function ProduitRow({ produit, onDelete }: ProduitRowProps) {
           <>
             <Text style={[
               styles.produitQty,
-              isEmpty ? { color: COLORS.danger } : isLow ? { color: "#F59E0B" } : { color: COLORS.success }
+              isEmpty ? { color: COLORS.danger } : belowMin ? { color: "#F59E0B" } : isLow ? { color: "#F59E0B" } : { color: COLORS.success }
             ]}>
               {produit.quantite}
             </Text>
             <Pressable
               style={styles.editBtn}
-              onPress={() => {
-                setNewQty(String(produit.quantite));
-                setEditing(true);
-              }}
+              onPress={() => { setNewQty(String(produit.quantite)); setEditMode("qty"); }}
             >
               <Feather name="edit-2" size={14} color={COLORS.textSecondary} />
+            </Pressable>
+            <Pressable
+              style={[styles.editBtn, { backgroundColor: hasMin ? "#FEF3C7" : COLORS.background }]}
+              onPress={() => { setNewMin(String(produit.stockMinimum)); setEditMode("min"); }}
+            >
+              <Feather name="target" size={14} color={hasMin ? "#F59E0B" : COLORS.textSecondary} />
             </Pressable>
             <Pressable style={styles.deleteProduitBtn} onPress={onDelete}>
               <Feather name="trash-2" size={14} color={COLORS.danger} />
@@ -339,6 +421,147 @@ function ProduitRow({ produit, onDelete }: ProduitRowProps) {
           </>
         )}
       </View>
+    </View>
+  );
+}
+
+function AlertesView({
+  collections,
+  isRefetching,
+  onRefresh,
+}: {
+  collections: CollectionWithProduits[];
+  isRefetching: boolean;
+  onRefresh: () => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const produitsSousMin = collections.flatMap((col) =>
+    col.produits
+      .filter((p) => p.stockMinimum > 0)
+      .map((p) => ({ ...p, collectionNom: col.nom }))
+  ).sort((a, b) => {
+    const defA = Math.max(0, a.stockMinimum - a.quantite);
+    const defB = Math.max(0, b.stockMinimum - b.quantite);
+    if (defA !== defB) return defB - defA;
+    return b.stockMinimum - a.stockMinimum;
+  });
+
+  const produitsOk = produitsSousMin.filter((p) => p.quantite >= p.stockMinimum);
+  const produitsKo = produitsSousMin.filter((p) => p.quantite < p.stockMinimum);
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, stockMinimum }: { id: number; stockMinimum: number }) =>
+      api.inventory.updateProduit(id, { stockMinimum }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collections"] }),
+  });
+
+  if (produitsSousMin.length === 0) {
+    return (
+      <View style={styles.emptyState}>
+        <View style={styles.emptyIcon}>
+          <Feather name="target" size={40} color={COLORS.textSecondary} />
+        </View>
+        <Text style={styles.emptyTitle}>Aucun minimum défini</Text>
+        <Text style={styles.emptySubtitle}>
+          Appuyez sur l'icône cible (⊙) sur chaque produit pour définir un stock minimum
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
+      refreshControl={
+        <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor="#F59E0B" />
+      }
+    >
+      {produitsKo.length > 0 && (
+        <>
+          <View style={styles.alertSectionHeader}>
+            <View style={styles.alertSectionDot} />
+            <Text style={styles.alertSectionTitle}>À réapprovisionner ({produitsKo.length})</Text>
+          </View>
+          {produitsKo.map((p) => (
+            <AlertRow key={p.id} produit={p} />
+          ))}
+        </>
+      )}
+
+      {produitsOk.length > 0 && (
+        <>
+          <View style={[styles.alertSectionHeader, { marginTop: produitsKo.length > 0 ? 20 : 0 }]}>
+            <View style={[styles.alertSectionDot, { backgroundColor: COLORS.success }]} />
+            <Text style={[styles.alertSectionTitle, { color: COLORS.success }]}>Stock suffisant ({produitsOk.length})</Text>
+          </View>
+          {produitsOk.map((p) => (
+            <AlertRow key={p.id} produit={p} />
+          ))}
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+function AlertRow({ produit }: { produit: Produit & { collectionNom: string } }) {
+  const manque = Math.max(0, produit.stockMinimum - produit.quantite);
+  const belowMin = manque > 0;
+  const pct = Math.min(100, produit.stockMinimum > 0 ? (produit.quantite / produit.stockMinimum) * 100 : 100);
+
+  return (
+    <View style={[styles.alertRow, belowMin && styles.alertRowKo]}>
+      <View style={styles.alertRowTop}>
+        <View style={styles.alertRowLeft}>
+          <Text style={styles.alertRowCollection}>{produit.collectionNom}</Text>
+          <Text style={styles.alertRowCouleur}>{produit.couleur}</Text>
+        </View>
+        <View style={styles.alertRowRight}>
+          {belowMin ? (
+            <View style={styles.alertChip}>
+              <Feather name="alert-triangle" size={12} color="#F59E0B" />
+              <Text style={styles.alertChipText}>Ajouter {manque} pièce{manque > 1 ? "s" : ""}</Text>
+            </View>
+          ) : (
+            <View style={styles.okChip}>
+              <Feather name="check-circle" size={12} color={COLORS.success} />
+              <Text style={styles.okChipText}>Stock OK</Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.alertStockRow}>
+        <View style={styles.alertStockItem}>
+          <Text style={styles.alertStockLabel}>Stock actuel</Text>
+          <Text style={[styles.alertStockValue, { color: belowMin ? COLORS.danger : COLORS.success }]}>
+            {produit.quantite}
+          </Text>
+        </View>
+        <View style={styles.alertStockDivider} />
+        <View style={styles.alertStockItem}>
+          <Text style={styles.alertStockLabel}>Minimum requis</Text>
+          <Text style={styles.alertStockValue}>{produit.stockMinimum}</Text>
+        </View>
+        <View style={styles.alertStockDivider} />
+        <View style={styles.alertStockItem}>
+          <Text style={styles.alertStockLabel}>À ajouter</Text>
+          <Text style={[styles.alertStockValue, { color: belowMin ? "#F59E0B" : COLORS.success }]}>
+            {belowMin ? `+${manque}` : "—"}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.alertProgressBg}>
+        <View
+          style={[
+            styles.alertProgressFill,
+            { width: `${pct}%` as any, backgroundColor: belowMin ? "#F59E0B" : COLORS.success },
+          ]}
+        />
+      </View>
+      <Text style={styles.alertProgressLabel}>{Math.round(pct)}% du minimum</Text>
     </View>
   );
 }
@@ -686,6 +909,132 @@ const styles = StyleSheet.create({
   produitPrix: {
     fontSize: 11, fontFamily: "Inter_400Regular",
     color: COLORS.accent, marginTop: 1,
+  },
+  produitRowAlert: {
+    borderColor: "#F59E0B",
+    backgroundColor: "#FFFBEB",
+  },
+  minBadge: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
+  },
+  minBadgeAlert: { backgroundColor: "#FEF3C7" },
+  minBadgeOk: { backgroundColor: "#ECFDF5" },
+  minBadgeText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
+  minInputWrapper: { flexDirection: "row", alignItems: "center", gap: 4 },
+  minInputLabel: { fontSize: 10, fontFamily: "Inter_600SemiBold", color: "#F59E0B" },
+  tabBar: {
+    flexDirection: "row",
+    marginHorizontal: 20,
+    marginBottom: 12,
+    backgroundColor: COLORS.border,
+    borderRadius: 14,
+    padding: 4,
+    gap: 4,
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    borderRadius: 11,
+    gap: 6,
+  },
+  tabBtnActive: {
+    backgroundColor: COLORS.card,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  tabBtnText: {
+    fontSize: 13, fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary,
+  },
+  tabBtnTextActive: {
+    color: COLORS.accent, fontFamily: "Inter_700Bold",
+  },
+  alertBadge: {
+    backgroundColor: "#F59E0B", borderRadius: 10,
+    minWidth: 18, height: 18, justifyContent: "center", alignItems: "center",
+    paddingHorizontal: 4,
+  },
+  alertBadgeText: { fontSize: 11, fontFamily: "Inter_700Bold", color: "#fff" },
+  alertSectionHeader: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    marginBottom: 10, marginTop: 16,
+  },
+  alertSectionDot: {
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: "#F59E0B",
+  },
+  alertSectionTitle: {
+    fontSize: 12, fontFamily: "Inter_600SemiBold",
+    color: "#F59E0B", textTransform: "uppercase", letterSpacing: 1,
+  },
+  alertRow: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16, marginBottom: 10,
+    padding: 16, borderWidth: 1.5, borderColor: COLORS.border,
+    gap: 12,
+  },
+  alertRowKo: {
+    borderColor: "#F59E0B",
+    backgroundColor: "#FFFBEB",
+  },
+  alertRowTop: {
+    flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between",
+  },
+  alertRowLeft: { flex: 1, gap: 2 },
+  alertRowRight: { alignItems: "flex-end" },
+  alertRowCollection: {
+    fontSize: 10, fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary, textTransform: "uppercase", letterSpacing: 0.8,
+  },
+  alertRowCouleur: {
+    fontSize: 16, fontFamily: "Inter_700Bold",
+    color: COLORS.text, textTransform: "capitalize",
+  },
+  alertChip: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: "#FEF3C7", borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 4,
+  },
+  alertChipText: {
+    fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#F59E0B",
+  },
+  okChip: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: "#ECFDF5", borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 4,
+  },
+  okChipText: {
+    fontSize: 12, fontFamily: "Inter_600SemiBold", color: COLORS.success,
+  },
+  alertStockRow: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: COLORS.background,
+    borderRadius: 12, padding: 12,
+  },
+  alertStockItem: { flex: 1, alignItems: "center", gap: 4 },
+  alertStockDivider: { width: 1, height: 32, backgroundColor: COLORS.border },
+  alertStockLabel: {
+    fontSize: 10, fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary, textTransform: "uppercase", letterSpacing: 0.5,
+  },
+  alertStockValue: {
+    fontSize: 20, fontFamily: "Inter_700Bold", color: COLORS.text,
+  },
+  alertProgressBg: {
+    height: 6, backgroundColor: COLORS.border, borderRadius: 3, overflow: "hidden",
+  },
+  alertProgressFill: {
+    height: 6, borderRadius: 3,
+  },
+  alertProgressLabel: {
+    fontSize: 11, fontFamily: "Inter_400Regular", color: COLORS.textSecondary, textAlign: "right",
   },
   produitActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   produitQty: { fontSize: 16, fontFamily: "Inter_700Bold", minWidth: 32, textAlign: "right" },

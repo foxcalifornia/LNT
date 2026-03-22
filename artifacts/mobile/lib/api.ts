@@ -40,6 +40,7 @@ export type Produit = {
   couleur: string;
   quantite: number;
   prixCentimes: number;
+  stockMinimum: number;
   createdAt: string;
 };
 
@@ -107,7 +108,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    updateProduit: (id: number, data: { quantite?: number; couleur?: string; prixCentimes?: number }) =>
+    updateProduit: (id: number, data: { quantite?: number; couleur?: string; prixCentimes?: number; stockMinimum?: number }) =>
       request<Produit>(`/produits/${id}`, {
         method: "PUT",
         body: JSON.stringify(data),
