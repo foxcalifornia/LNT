@@ -188,11 +188,16 @@ export default function CaisseScreen() {
           onPress: async () => {
             try {
               await api.caisse.cancelLastVente();
-              refetchCollections();
-              queryClient.invalidateQueries({ queryKey: ["ventesJour"] });
+              await Promise.all([
+                refetchCollections(),
+                queryClient.refetchQueries({ queryKey: ["ventesJour"] }),
+              ]);
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             } catch (err: any) {
-              Alert.alert("Erreur", err.message ?? "Impossible d'annuler la vente");
+              Alert.alert(
+                "Erreur",
+                (err as Error)?.message ?? "Impossible d'annuler la vente"
+              );
             }
           },
         },
@@ -572,6 +577,44 @@ function ActiveCaisseView({
             </Pressable>
           </View>
         )}
+
+        <View style={styles.txJourSection}>
+          <View style={styles.txJourHeader}>
+            <Feather name="list" size={14} color={COLORS.textSecondary} />
+            <Text style={styles.txJourTitle}>Transactions du jour</Text>
+          </View>
+
+          {!ventesJour || ventesJour.transactions.length === 0 ? (
+            <View style={styles.txJourEmpty}>
+              <Text style={styles.txJourEmptyText}>Aucune vente aujourd'hui</Text>
+            </View>
+          ) : (
+            ventesJour.transactions.map((t, i) => {
+              const isCash = t.typePaiement === "CASH";
+              const color = isCash ? COLORS.cash : COLORS.card_payment;
+              return (
+                <View key={i} style={styles.txJourRow}>
+                  <Text style={styles.txJourHeure}>{t.heure}</Text>
+                  <Text style={styles.txJourSep}>—</Text>
+                  <Text style={[styles.txJourMontant, { color }]}>
+                    {formatPrix(t.montantCentimes)}
+                  </Text>
+                  <Text style={styles.txJourSep}>—</Text>
+                  <View style={[styles.txJourBadge, { backgroundColor: color + "18" }]}>
+                    <Feather
+                      name={isCash ? "dollar-sign" : "credit-card"}
+                      size={11}
+                      color={color}
+                    />
+                    <Text style={[styles.txJourBadgeText, { color }]}>
+                      {isCash ? "Cash" : "Carte"}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
       </ScrollView>
 
       <View style={[styles.stickyBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
@@ -1077,5 +1120,78 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
     color: COLORS.danger,
+  },
+
+  txJourSection: {
+    marginHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  txJourHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 12,
+  },
+  txJourTitle: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  txJourEmpty: {
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    alignItems: "center",
+  },
+  txJourEmptyText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+  },
+  txJourRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    marginBottom: 6,
+  },
+  txJourHeure: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.text,
+    minWidth: 42,
+  },
+  txJourSep: {
+    fontSize: 13,
+    color: COLORS.border,
+    fontFamily: "Inter_400Regular",
+  },
+  txJourMontant: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: -0.3,
+    flex: 1,
+  },
+  txJourBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  txJourBadgeText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
   },
 });

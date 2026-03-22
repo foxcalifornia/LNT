@@ -2,13 +2,14 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 
 import Colors from "@/constants/colors";
@@ -22,6 +23,7 @@ type Props = {
 };
 
 export function VentesJourModal({ visible, onClose }: Props) {
+  const insets = useSafeAreaInsets();
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["ventesJour"],
     queryFn: api.caisse.getVentesJour,
@@ -29,10 +31,48 @@ export function VentesJourModal({ visible, onClose }: Props) {
     refetchInterval: visible ? 15000 : false,
   });
 
+  const transactions = data?.transactions ?? [];
+
+  const ListHeader = () => (
+    <>
+      <View style={styles.summaryRow}>
+        <SummaryCard
+          label="Cash"
+          icon="dollar-sign"
+          color={COLORS.cash}
+          amount={data?.totalCash ?? 0}
+        />
+        <SummaryCard
+          label="Carte"
+          icon="credit-card"
+          color={COLORS.card_payment}
+          amount={data?.totalCarte ?? 0}
+        />
+        <SummaryCard
+          label="Total"
+          icon="trending-up"
+          color={COLORS.accent}
+          amount={data?.total ?? 0}
+          isTotal
+        />
+      </View>
+      <Text style={styles.sectionLabel}>
+        {transactions.length} transaction{transactions.length !== 1 ? "s" : ""}
+      </Text>
+    </>
+  );
+
+  const ListEmpty = () => (
+    <View style={styles.emptyState}>
+      <Feather name="shopping-bag" size={32} color={COLORS.border} />
+      <Text style={styles.emptyText}>Aucune vente aujourd'hui</Text>
+    </View>
+  );
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 20) }]}>
           <View style={styles.handle} />
 
           <View style={styles.header}>
@@ -57,49 +97,16 @@ export function VentesJourModal({ visible, onClose }: Props) {
               </Pressable>
             </View>
           ) : (
-            <>
-              <View style={styles.summaryRow}>
-                <SummaryCard
-                  label="Cash"
-                  icon="dollar-sign"
-                  color={COLORS.cash}
-                  amount={data?.totalCash ?? 0}
-                />
-                <SummaryCard
-                  label="Carte"
-                  icon="credit-card"
-                  color={COLORS.card_payment}
-                  amount={data?.totalCarte ?? 0}
-                />
-                <SummaryCard
-                  label="Total"
-                  icon="trending-up"
-                  color={COLORS.accent}
-                  amount={data?.total ?? 0}
-                  isTotal
-                />
-              </View>
-
-              <Text style={styles.sectionLabel}>
-                {data?.transactions.length ?? 0} transaction{(data?.transactions.length ?? 0) !== 1 ? "s" : ""}
-              </Text>
-
-              <ScrollView
-                style={styles.list}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
-              >
-                {data?.transactions.length === 0 && (
-                  <View style={styles.emptyState}>
-                    <Feather name="shopping-bag" size={32} color={COLORS.border} />
-                    <Text style={styles.emptyText}>Aucune vente aujourd'hui</Text>
-                  </View>
-                )}
-                {data?.transactions.map((t, i) => (
-                  <TransactionCard key={i} transaction={t} />
-                ))}
-              </ScrollView>
-            </>
+            <FlatList
+              data={transactions}
+              keyExtractor={(_, i) => String(i)}
+              renderItem={({ item }) => <TransactionCard transaction={item} />}
+              ListHeaderComponent={<ListHeader />}
+              ListEmptyComponent={<ListEmpty />}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.listContent}
+              style={styles.list}
+            />
           )}
         </View>
       </View>
@@ -182,8 +189,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingBottom: 36,
     maxHeight: "92%",
+    flexShrink: 1,
   },
   handle: {
     width: 36,
@@ -296,6 +303,10 @@ const styles = StyleSheet.create({
   },
   list: {
     flex: 1,
+  },
+  listContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
   },
   emptyState: {
     alignItems: "center",

@@ -1,0 +1,85 @@
+Corriger et améliorer la section “Caisse” et la section “Ventes du jour”.
+
+Problèmes à corriger :
+
+1. Le bouton “Annuler dernière vente” ne fonctionne pas
+- Vérifier et corriger la logique complète du bouton.
+- Lorsqu’on clique sur “Annuler dernière vente”, l’application doit :
+  - récupérer la dernière vente enregistrée
+  - annuler cette vente dans la base de données
+  - remettre automatiquement les produits annulés dans le stock
+  - mettre à jour immédiatement l’écran caisse
+  - mettre à jour :
+    - le total cash
+    - le total carte
+    - le total général
+    - le nombre de ventes
+    - le nombre de paires vendues
+    - la section “Dernière vente”
+    - la liste des transactions du jour
+	- mettre à jour l'invetaire des stocks 
+- Ajouter une fenêtre de confirmation avant l’annulation.
+- Si aucune vente n’existe, désactiver le bouton ou afficher un message clair.
+
+2. Bug iOS dans “Ventes du jour”
+- Sur le simulateur iOS, la page “Ventes du jour” n’affiche pas la liste des ventes.
+- Elle affiche seulement le nombre de transactions.
+- Sur le simulateur web, cela fonctionne correctement.
+
+Corriger ce problème pour que la page “Ventes du jour” fonctionne aussi sur iOS.
+
+Vérifications à faire :
+- vérifier le chargement des données sur iOS
+- vérifier si la liste des ventes est bien récupérée depuis la base de données
+- vérifier le rendu de la liste sur mobile iOS
+- vérifier s’il y a un problème de scroll, de container, de height, de safe area ou de composant masqué
+- vérifier que les ventes affichées correspondent bien aux ventes du jour depuis l’ouverture de la caisse
+- ajouter une gestion d’erreur visible si les données ne chargent pas
+
+Comportement attendu dans “Ventes du jour” :
+Pour chaque vente, afficher :
+- heure de la vente
+- montant
+- mode de paiement
+- éventuellement le détail des produits vendus si disponible
+
+3. Ajouter les lignes de transactions du jour sur l’écran Caisse
+Sur l’écran Caisse, sous la section “Dernière vente”, ajouter une nouvelle section appelée :
+
+**“Transactions du jour”**
+
+Cette section doit afficher directement les lignes de ventes effectuées aujourd’hui depuis l’ouverture de la caisse.
+
+Pour chaque transaction, afficher :
+- heure de la vente
+- prix / montant total
+- mode de paiement
+
+Exemple :
+- 11:58 — €39 — Carte
+- 12:12 — €25 — Cash
+- 12:40 — €68 — Carte
+
+Comportement attendu :
+- les transactions doivent s’afficher par ordre chronologique inverse, de la plus récente à la plus ancienne
+- la liste doit se mettre à jour automatiquement après chaque vente
+- la liste doit aussi se mettre à jour après annulation de la dernière vente
+- si aucune vente n’existe, afficher un message simple : “Aucune vente aujourd’hui”
+
+4. Interface mobile
+L’affichage doit être parfaitement compatible sur :
+- web
+- iPhone / simulateur iOS
+
+Vérifier en particulier :
+- le scroll vertical
+- les zones sticky
+- la safe area iOS
+- la visibilité réelle des listes dans les vues mobiles
+
+Objectif final :
+Avoir un écran Caisse fiable et pratique, avec :
+- un bouton “Annuler dernière vente” qui fonctionne réellement
+- une page “Ventes du jour” fonctionnelle sur iOS
+- une section “Transactions du jour” visible directement sur l’écran caisse
+- une interface claire et stable sur web et mobile

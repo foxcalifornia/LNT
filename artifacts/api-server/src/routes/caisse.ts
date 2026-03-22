@@ -89,28 +89,33 @@ router.get("/today", async (req, res) => {
 
 router.delete("/ventes/last", async (req, res) => {
   try {
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    // Get the most recent ventes (last 24h to avoid timezone issues)
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const allVentesToday = await db
+    const recentVentes = await db
       .select()
       .from(ventesTable)
-      .where(gte(ventesTable.createdAt, startOfDay))
+      .where(gte(ventesTable.createdAt, since24h))
       .orderBy(desc(ventesTable.createdAt));
 
-    if (allVentesToday.length === 0) {
-      res.status(404).json({ error: "Aucune vente à annuler aujourd'hui" });
+    req.log.info({ count: recentVentes.length }, "DELETE /ventes/last: ventes found in last 24h");
+
+    if (recentVentes.length === 0) {
+      res.status(404).json({ error: "Aucune vente à annuler" });
       return;
     }
 
-    const lastVente = allVentesToday[0];
+    const lastVente = recentVentes[0];
     const lastTime = lastVente.createdAt.getTime();
-    const windowMs = 15000;
+    const windowMs = 15000; // 15s window to group a single "transaction"
 
-    const transactionVentes = allVentesToday.filter((v) => {
+    // All ventes within 15s of the last vente with the same payment type
+    const transactionVentes = recentVentes.filter((v) => {
       const ts = v.createdAt.getTime();
       return lastTime - ts <= windowMs && v.typePaiement === lastVente.typePaiement;
     });
+
+    req.log.info({ transactionVentes: transactionVentes.length }, "DELETE /ventes/last: cancelling ventes");
 
     for (const vente of transactionVentes) {
       const [current] = await db
