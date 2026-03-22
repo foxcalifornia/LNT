@@ -1,0 +1,98 @@
+Améliorer la section “Reporting”.
+
+Objectif :
+Permettre au propriétaire du magasin LNT Paris de suivre facilement les performances du magasin, l’état du stock, et surtout la ponctualité des vendeurs grâce au suivi des ouvertures de caisse.
+
+1. Ajouter un reporting des ouvertures de caisse
+
+Créer dans le reporting une section dédiée au suivi des ouvertures de caisse.
+
+Cette section doit permettre de voir, pour chaque jour :
+- la date
+- l’heure d’ouverture de la caisse
+- la localisation
+- le statut de ponctualité
+
+Règle de ponctualité :
+- l’ouverture normale de la caisse est attendue à 10h00
+- si la caisse est ouverte à 10h00 ou avant, afficher : “À l’heure”
+- si la caisse est ouverte après 10h00, afficher : “En retard”
+- afficher aussi le nombre exact de minutes de retard
+
+Exemple :
+- Date : 12/03/2026
+- Heure d’ouverture : 10:12
+- Statut : En retard
+- Retard : 12 minutes
+
+Objectif :
+Pouvoir suivre facilement si les vendeurs ouvrent la caisse à l’heure chaque jour.
+
+2. Conserver les autres éléments du reporting
+
+Le reporting doit aussi continuer à afficher :
+- le chiffre d’affaires total
+- le nombre total de ventes
+- le panier moyen
+- les ventes en cash
+- les ventes en carte bancaire
+- les produits les plus vendus
+- les produits à réapprovisionner
+
+3. Organisation de l’affichage avec boutons en bas
+
+Pour garder une interface simple, propre et lisible, organiser la section Reporting avec des boutons de navigation en bas de page.
+
+Ajouter une barre sticky en bas de l’écran avec les boutons suivants :
+- Résumé
+- Ouvertures de caisse
+- Ventes
+- Stock
+- Réapprovisionnement
+
+Comportement attendu :
+- les boutons doivent rester toujours visibles en bas de l’écran
+- cliquer sur un bouton affiche la section correspondante
+- l’objectif est d’éviter une page trop chargée et de faciliter la lecture
+
+4. Contenu de chaque bouton
+
+Résumé
+- chiffre d’affaires
+- nombre de ventes
+- panier moyen
+- répartition cash / carte
+
+Ouvertures de caisse
+- historique des ouvertures de caisse
+- heure d’ouverture par jour
+- localisation
+- statut à l’heure / en retard
+- nombre de minutes de retard
+
+Ventes
+- ventes par période
+- produits les plus vendus
+- graphiques simples
+
+Stock
+- stock total
+- stock faible
+- ruptures
+
+Réapprovisionnement
+- produits à recommander
+- stock actuel
+- stock minimum
+- quantité à ajouter
+
+5. Interface utilisateur
+
+L’interface Reporting doit être :
+- simple
+- claire
+- rapide à lire
+- adaptée à une utilisation quotidienne en boutique
+
+Objectif final :
+Avoir un reporting visuel et pratique qui permet de suivre à la fois les ventes, le stock, et la ponctualité des vendeurs grâce aux ouvertures de caisse.
