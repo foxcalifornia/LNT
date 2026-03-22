@@ -65,6 +65,7 @@ artifacts-monorepo/
 - `collections` — collections de lunettes (nom, description)
 - `produits` — produits par collection (couleur, quantite)
 - `ventes` — historique des ventes (produit_id, quantite_vendue, type_paiement)
+- `card_payments` — paiements carte SumUp (saleReference, sumupCheckoutId, status, itemsJson, responseJson)
 
 ## API Endpoints
 
@@ -75,6 +76,11 @@ artifacts-monorepo/
 - `PUT /api/produits/:id` — modifier quantité/couleur
 - `DELETE /api/produits/:id` — supprimer un produit
 - `POST /api/ventes` — enregistrer une vente (soustrait le stock)
+- `DELETE /api/ventes/last` — annuler la dernière vente
+- `POST /api/payments/sumup/create` — créer un checkout SumUp card payment
+- `GET /api/payments/sumup/status/:ref` — poll statut checkout SumUp
+- `POST /api/payments/sumup/confirm` — confirmer paiement + enregistrer ventes
+- `POST /api/payments/sumup/cancel` — annuler checkout SumUp
 
 ## Password
 

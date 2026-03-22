@@ -285,6 +285,11 @@ export default function CaisseScreen() {
         onCartChange={setCart}
         onClose={() => setShowPanier(false)}
         onVente={handleVente}
+        sessionId={currentSession?.id ?? null}
+        onCarteSuccess={async () => {
+          refetchCollections();
+          queryClient.invalidateQueries({ queryKey: ["ventesJour"] });
+        }}
       />
     </View>
   );
