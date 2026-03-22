@@ -1,8 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as WebBrowser from "expo-web-browser";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -13,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
 import {
   computePromo,
   type CartItem,
@@ -22,13 +24,15 @@ import {
 
 const COLORS = Colors.light;
 
+type VentePaymentStep = "sumup_initiating" | "sumup_browser" | "sumup_polling" | null;
+
 type Props = {
   visible: boolean;
   collections: CollectionWithProduits[];
   defaultPaymentMode?: "cash" | "carte";
   cart: CartItem[];
   onCartChange: (cart: CartItem[]) => void;
-  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
+  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte", sumupCheckoutId?: string, sumupTransactionId?: string) => Promise<void>;
   onClose: () => void;
 };
 
@@ -38,6 +42,7 @@ export function VenteModal({ visible, collections, defaultPaymentMode, cart, onC
   const [selectedCollection, setSelectedCollection] = useState<CollectionWithProduits | null>(null);
   const [paymentMode, setPaymentMode] = useState<"cash" | "carte" | null>(defaultPaymentMode ?? null);
   const [loading, setLoading] = useState(false);
+  const [paymentStep, setPaymentStep] = useState<VentePaymentStep>(null);
   const [success, setSuccess] = useState(false);
   const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number } | null>(null);
 
@@ -66,25 +71,86 @@ export function VenteModal({ visible, collections, defaultPaymentMode, cart, onC
     onCartChange(newCart);
   };
 
+  const pollSumupStatus = async (checkoutId: string): Promise<{ status: string; transactionId?: string }> => {
+    const maxAttempts = 30;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const result = await api.sumup.getCheckoutStatus(checkoutId);
+      if (result.status === "PAID" || result.status === "FAILED") return result;
+    }
+    return { status: "TIMEOUT" };
+  };
+
+  const resetModal = () => {
+    setSuccess(false);
+    setSuccessSnapshot(null);
+    setPaymentStep(null);
+    onCartChange([]);
+    setView("collections");
+    setSelectedCollection(null);
+    setPaymentMode(defaultPaymentMode ?? null);
+    onClose();
+  };
+
   const handleConfirm = async () => {
     if (cart.length === 0 || loading || !paymentMode) return;
     setLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    if (paymentMode === "cash") {
+      try {
+        await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), "cash");
+        setSuccessSnapshot({ items: totalItems, total: totalFinal });
+        setSuccess(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setTimeout(resetModal, 1500);
+      } catch {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // --- SumUp card payment ---
     try {
-      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), paymentMode);
-      setSuccessSnapshot({ items: totalItems, total: totalFinal });
-      setSuccess(true);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setTimeout(() => {
-        setSuccess(false);
-        setSuccessSnapshot(null);
-        onCartChange([]);
-        setView("collections");
-        setSelectedCollection(null);
-        setPaymentMode(defaultPaymentMode ?? null);
-        onClose();
-      }, 1500);
-    } catch {
+      setPaymentStep("sumup_initiating");
+      const { checkoutId, checkoutUrl } = await api.sumup.createCheckout({
+        amountCentimes: totalFinal,
+        description: `LNT Paris · ${totalItems} article${totalItems > 1 ? "s" : ""}`,
+      });
+
+      setPaymentStep("sumup_browser");
+      await WebBrowser.openBrowserAsync(checkoutUrl, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+      });
+
+      setPaymentStep("sumup_polling");
+      const result = await pollSumupStatus(checkoutId);
+
+      if (result.status === "PAID") {
+        await onVente(
+          cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })),
+          "carte",
+          checkoutId,
+          result.transactionId,
+        );
+        setSuccessSnapshot({ items: totalItems, total: totalFinal });
+        setSuccess(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setTimeout(resetModal, 1800);
+      } else {
+        const msg =
+          result.status === "TIMEOUT"
+            ? "Le paiement n'a pas été confirmé à temps. Vérifiez votre application SumUp."
+            : "Le paiement a été annulé ou a échoué.";
+        Alert.alert("Paiement non confirmé", msg);
+        setLoading(false);
+        setPaymentStep(null);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Erreur inconnue";
+      Alert.alert("Erreur paiement", msg);
       setLoading(false);
+      setPaymentStep(null);
     }
   };
 
@@ -163,6 +229,12 @@ export function VenteModal({ visible, collections, defaultPaymentMode, cart, onC
               onSelectPayment={setPaymentMode}
               loading={loading}
               onConfirm={handleConfirm}
+              paymentStepLabel={
+                paymentStep === "sumup_initiating" ? "Initialisation du paiement…" :
+                paymentStep === "sumup_browser" ? "Paiement en cours…" :
+                paymentStep === "sumup_polling" ? "Vérification du paiement…" :
+                undefined
+              }
             />
           )}
         </View>
@@ -360,6 +432,7 @@ function CartFooter({
   onSelectPayment,
   loading,
   onConfirm,
+  paymentStepLabel,
 }: {
   totalItems: number;
   totalCentimes: number;
@@ -369,6 +442,7 @@ function CartFooter({
   onSelectPayment: (mode: "cash" | "carte") => void;
   loading: boolean;
   onConfirm: () => void;
+  paymentStepLabel?: string;
 }) {
   const confirmColor = paymentMode === "carte" ? COLORS.card_payment : paymentMode === "cash" ? COLORS.cash : COLORS.accent;
   const hasPromo = promo.nbFree > 0;
@@ -441,22 +515,29 @@ function CartFooter({
         </Pressable>
       </View>
 
-      <Pressable
-        style={[styles.confirmBtn, { backgroundColor: confirmColor }, (loading || !paymentMode) && { opacity: 0.45 }]}
-        onPress={onConfirm}
-        disabled={loading || !paymentMode}
-      >
-        {loading ? (
-          <ActivityIndicator color="#fff" size="small" />
-        ) : (
-          <>
-            <Feather name="check" size={20} color="#fff" />
-            <Text style={styles.confirmText}>
-              {paymentMode ? "Confirmer la Vente" : "Choisir le mode de paiement"}
-            </Text>
-          </>
-        )}
-      </Pressable>
+      {loading && paymentStepLabel ? (
+        <View style={styles.sumupLoadingRow}>
+          <ActivityIndicator color={COLORS.card_payment} size="small" />
+          <Text style={styles.sumupLoadingLabel}>{paymentStepLabel}</Text>
+        </View>
+      ) : (
+        <Pressable
+          style={[styles.confirmBtn, { backgroundColor: confirmColor }, (loading || !paymentMode) && { opacity: 0.45 }]}
+          onPress={onConfirm}
+          disabled={loading || !paymentMode}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <>
+              <Feather name="check" size={20} color="#fff" />
+              <Text style={styles.confirmText}>
+                {paymentMode ? "Confirmer la Vente" : "Choisir le mode de paiement"}
+              </Text>
+            </>
+          )}
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -839,5 +920,18 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: "#fff",
     letterSpacing: -0.3,
+  },
+  sumupLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    paddingVertical: 18,
+  },
+  sumupLoadingLabel: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.card_payment,
+    letterSpacing: -0.2,
   },
 });

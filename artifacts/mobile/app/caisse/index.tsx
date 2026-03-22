@@ -157,7 +157,9 @@ export default function CaisseScreen() {
 
   const handleVente = async (
     items: { produitId: number; quantite: number }[],
-    paymentMode: "cash" | "carte"
+    paymentMode: "cash" | "carte",
+    sumupCheckoutId?: string,
+    sumupTransactionId?: string,
   ) => {
     if (!currentSession) return;
     for (const item of items) {
@@ -165,6 +167,8 @@ export default function CaisseScreen() {
         produitId: item.produitId,
         quantiteVendue: item.quantite,
         typePaiement: paymentMode === "cash" ? "CASH" : "CARTE",
+        sumupCheckoutId,
+        sumupTransactionId,
       });
     }
     refetchCollections();

@@ -137,11 +137,20 @@ export const api = {
       }),
     deleteProduit: (id: number) =>
       request<{ message: string }>(`/produits/${id}`, { method: "DELETE" }),
-    createVente: (data: { produitId: number; quantiteVendue: number; typePaiement: string }) =>
+    createVente: (data: { produitId: number; quantiteVendue: number; typePaiement: string; sumupCheckoutId?: string; sumupTransactionId?: string }) =>
       request<Vente>("/ventes", {
         method: "POST",
         body: JSON.stringify(data),
       }),
+  },
+  sumup: {
+    createCheckout: (data: { amountCentimes: number; description?: string }) =>
+      request<{ checkoutId: string; checkoutUrl: string; reference: string }>("/caisse/sumup/checkout", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    getCheckoutStatus: (checkoutId: string) =>
+      request<{ status: string; checkoutId: string; transactionId?: string }>(`/caisse/sumup/checkout/${checkoutId}`),
   },
   reporting: {
     getDaily: () => request<JourReport[]>("/reporting/daily"),

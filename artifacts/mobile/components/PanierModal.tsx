@@ -1,5 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as WebBrowser from "expo-web-browser";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -14,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
 import {
   cartTotalCentimes,
   cartTotalItems,
@@ -24,19 +25,22 @@ import {
 
 const COLORS = Colors.light;
 
+type PaymentStep = "sumup_initiating" | "sumup_browser" | "sumup_polling" | null;
+
 type Props = {
   visible: boolean;
   cart: CartItem[];
   collections: CollectionWithProduits[];
   onCartChange: (cart: CartItem[]) => void;
   onClose: () => void;
-  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
+  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte", sumupCheckoutId?: string, sumupTransactionId?: string) => Promise<void>;
 };
 
 export function PanierModal({ visible, cart, collections, onCartChange, onClose, onVente }: Props) {
   const insets = useSafeAreaInsets();
   const [editingProduitId, setEditingProduitId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [paymentStep, setPaymentStep] = useState<PaymentStep>(null);
   const [success, setSuccess] = useState(false);
   const [successMode, setSuccessMode] = useState<"cash" | "carte" | null>(null);
   const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number } | null>(null);
@@ -47,26 +51,87 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
   const totalFinal = totalCentimes - promo.discountCentimes;
   const hasPromo = promo.nbFree > 0;
 
+  const pollSumupStatus = async (checkoutId: string): Promise<{ status: string; transactionId?: string }> => {
+    const maxAttempts = 30;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const result = await api.sumup.getCheckoutStatus(checkoutId);
+      if (result.status === "PAID" || result.status === "FAILED") {
+        return result;
+      }
+    }
+    return { status: "TIMEOUT" };
+  };
+
+  const finishSuccess = (mode: "cash" | "carte") => {
+    setSuccessMode(mode);
+    setSuccessSnapshot({ items: totalItems, total: totalFinal });
+    setSuccess(true);
+    setPaymentStep(null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setTimeout(() => {
+      setSuccess(false);
+      setSuccessMode(null);
+      setSuccessSnapshot(null);
+      setLoading(false);
+      onCartChange([]);
+      onClose();
+    }, 1800);
+  };
+
   const handlePay = async (mode: "cash" | "carte") => {
     if (cart.length === 0 || loading) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setLoading(true);
-    try {
-      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), mode);
-      setSuccessMode(mode);
-      setSuccessSnapshot({ items: totalItems, total: totalFinal });
-      setSuccess(true);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setTimeout(() => {
-        setSuccess(false);
-        setSuccessMode(null);
-        setSuccessSnapshot(null);
+
+    if (mode === "cash") {
+      try {
+        await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), "cash");
+        finishSuccess("cash");
+      } catch {
         setLoading(false);
-        onCartChange([]);
-        onClose();
-      }, 1500);
-    } catch {
+      }
+      return;
+    }
+
+    // --- SumUp card payment flow ---
+    try {
+      setPaymentStep("sumup_initiating");
+      const { checkoutId, checkoutUrl } = await api.sumup.createCheckout({
+        amountCentimes: totalFinal,
+        description: `LNT Paris · ${totalItems} article${totalItems > 1 ? "s" : ""}`,
+      });
+
+      setPaymentStep("sumup_browser");
+      await WebBrowser.openBrowserAsync(checkoutUrl, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+      });
+
+      setPaymentStep("sumup_polling");
+      const result = await pollSumupStatus(checkoutId);
+
+      if (result.status === "PAID") {
+        await onVente(
+          cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })),
+          "carte",
+          checkoutId,
+          result.transactionId,
+        );
+        finishSuccess("carte");
+      } else {
+        const msg =
+          result.status === "TIMEOUT"
+            ? "Le paiement n'a pas été confirmé à temps. Vérifiez votre application SumUp."
+            : "Le paiement a été annulé ou a échoué.";
+        Alert.alert("Paiement non confirmé", msg);
+        setLoading(false);
+        setPaymentStep(null);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Erreur inconnue";
+      Alert.alert("Erreur paiement", msg);
       setLoading(false);
+      setPaymentStep(null);
     }
   };
 
@@ -312,37 +377,38 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
               </ScrollView>
 
               <View style={styles.footer}>
-                <Text style={styles.footerHint}>Choisir le mode de paiement</Text>
-                <View style={styles.payRow}>
-                  <Pressable
-                    style={[styles.payBtn, { backgroundColor: COLORS.cash }, loading && { opacity: 0.6 }]}
-                    onPress={() => handlePay("cash")}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <>
+                {paymentStep ? (
+                  <View style={styles.sumupLoadingContainer}>
+                    <ActivityIndicator color={COLORS.card_payment} size="small" />
+                    <Text style={styles.sumupLoadingText}>
+                      {paymentStep === "sumup_initiating" && "Initialisation du paiement…"}
+                      {paymentStep === "sumup_browser" && "Paiement en cours…"}
+                      {paymentStep === "sumup_polling" && "Vérification du paiement…"}
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={styles.footerHint}>Choisir le mode de paiement</Text>
+                    <View style={styles.payRow}>
+                      <Pressable
+                        style={[styles.payBtn, { backgroundColor: COLORS.cash }, loading && { opacity: 0.6 }]}
+                        onPress={() => handlePay("cash")}
+                        disabled={loading}
+                      >
                         <Feather name="dollar-sign" size={17} color="#fff" />
                         <Text style={styles.payBtnText}>Payer Cash</Text>
-                      </>
-                    )}
-                  </Pressable>
-                  <Pressable
-                    style={[styles.payBtn, { backgroundColor: COLORS.card_payment }, loading && { opacity: 0.6 }]}
-                    onPress={() => handlePay("carte")}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.payBtn, { backgroundColor: COLORS.card_payment }, loading && { opacity: 0.6 }]}
+                        onPress={() => handlePay("carte")}
+                        disabled={loading}
+                      >
                         <Feather name="credit-card" size={17} color="#fff" />
                         <Text style={styles.payBtnText}>Payer Carte</Text>
-                      </>
-                    )}
-                  </Pressable>
-                </View>
+                      </Pressable>
+                    </View>
+                  </>
+                )}
               </View>
             </>
           )}
@@ -533,4 +599,12 @@ const styles = StyleSheet.create({
     justifyContent: "center", gap: 8, paddingVertical: 15, borderRadius: 14,
   },
   payBtnText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff", letterSpacing: -0.2 },
+  sumupLoadingContainer: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 12, paddingVertical: 16,
+  },
+  sumupLoadingText: {
+    fontSize: 15, fontFamily: "Inter_600SemiBold",
+    color: COLORS.card_payment, letterSpacing: -0.2,
+  },
 });
