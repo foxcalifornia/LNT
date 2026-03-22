@@ -15,11 +15,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import Colors from "@/constants/colors";
-import { api, type Session, type CollectionWithProduits } from "@/lib/api";
+import { api, formatPrix, type Session, type CollectionWithProduits } from "@/lib/api";
+import { cartTotalItems, type CartItem } from "@/lib/cart";
 import { VenteModal } from "@/components/VenteModal";
 import { PasswordModal } from "@/components/PasswordModal";
 import { VentesJourModal } from "@/components/VentesJourModal";
 import { InventaireReadonlyModal } from "@/components/InventaireReadonlyModal";
+import { PanierModal } from "@/components/PanierModal";
 
 const COLORS = Colors.light;
 
@@ -51,11 +53,13 @@ export default function CaisseScreen() {
   const queryClient = useQueryClient();
   const [caisseState, setCaisseState] = useState<CaisseState>("checking");
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [showVente, setShowVente] = useState(false);
   const [ventePaymentMode, setVentePaymentMode] = useState<"cash" | "carte">("cash");
   const [showPassword, setShowPassword] = useState(false);
   const [showVentesJour, setShowVentesJour] = useState(false);
   const [showInventaire, setShowInventaire] = useState(false);
+  const [showPanier, setShowPanier] = useState(false);
   const [openingLoading, setOpeningLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -168,6 +172,7 @@ export default function CaisseScreen() {
       });
     }
     refetchCollections();
+    queryClient.invalidateQueries({ queryKey: ["ventesJour"] });
   };
 
   const closeCaisse = () => {
@@ -182,6 +187,7 @@ export default function CaisseScreen() {
           style: "destructive",
           onPress: () => {
             setCurrentSession(null);
+            setCart([]);
             setCaisseState(isCaisseHours() ? "need_open" : "closed_hours");
           },
         },
@@ -190,7 +196,7 @@ export default function CaisseScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Pressable style={styles.backBtn} onPress={() => router.back()}>
           <Feather name="x" size={22} color={COLORS.text} />
@@ -214,7 +220,7 @@ export default function CaisseScreen() {
       ) : (
         <ActiveCaisseView
           session={currentSession}
-          collections={collections}
+          cart={cart}
           onClose={closeCaisse}
           onShowVente={(mode) => {
             setVentePaymentMode(mode);
@@ -222,6 +228,8 @@ export default function CaisseScreen() {
           }}
           onShowInventaire={() => setShowInventaire(true)}
           onShowVentesJour={() => setShowVentesJour(true)}
+          onShowPanier={() => setShowPanier(true)}
+          insets={insets}
         />
       )}
 
@@ -240,6 +248,8 @@ export default function CaisseScreen() {
           visible={showVente}
           collections={collections}
           defaultPaymentMode={ventePaymentMode}
+          cart={cart}
+          onCartChange={setCart}
           onVente={handleVente}
           onClose={() => setShowVente(false)}
         />
@@ -255,6 +265,16 @@ export default function CaisseScreen() {
         collections={collections}
         onClose={() => setShowInventaire(false)}
       />
+
+      <PanierModal
+        visible={showPanier}
+        cart={cart}
+        onClose={() => setShowPanier(false)}
+        onOpenVente={(mode) => {
+          setVentePaymentMode(mode);
+          setShowVente(true);
+        }}
+      />
     </View>
   );
 }
@@ -266,7 +286,6 @@ function NeedOpenView({
   loading: boolean;
   onOpen: () => void;
 }) {
-  const now = new Date();
   const dateLabel = getTodayLabel();
   const heureLabel = getHeureStr();
 
@@ -342,14 +361,34 @@ function ClosedView({
 
 type ActiveCaisseViewProps = {
   session: Session | null;
-  collections: CollectionWithProduits[];
+  cart: CartItem[];
   onClose: () => void;
   onShowVente: (mode: "cash" | "carte") => void;
   onShowInventaire: () => void;
   onShowVentesJour: () => void;
+  onShowPanier: () => void;
+  insets: { bottom: number };
 };
 
-function ActiveCaisseView({ session, collections: _collections, onClose, onShowVente, onShowInventaire, onShowVentesJour }: ActiveCaisseViewProps) {
+function ActiveCaisseView({
+  session,
+  cart,
+  onClose,
+  onShowVente,
+  onShowInventaire,
+  onShowVentesJour,
+  onShowPanier,
+  insets,
+}: ActiveCaisseViewProps) {
+  const cartCount = cartTotalItems(cart);
+
+  const { data: ventesJour } = useQuery({
+    queryKey: ["ventesJour"],
+    queryFn: api.caisse.getVentesJour,
+    refetchInterval: 15000,
+  });
+
+  const nbVentes = ventesJour?.transactions?.length ?? 0;
 
   return (
     <View style={styles.activeCaisse}>
@@ -382,21 +421,76 @@ function ActiveCaisseView({ session, collections: _collections, onClose, onShowV
         </Pressable>
       </View>
 
-      <View style={styles.bottomActions}>
-        <Pressable style={styles.bottomBtn} onPress={onShowInventaire}>
-          <Feather name="package" size={17} color={COLORS.accent} />
-          <Text style={styles.bottomBtnText}>Inventaire</Text>
+      <View style={styles.totauxPanel}>
+        <View style={styles.totauxHeader}>
+          <Feather name="activity" size={14} color={COLORS.accent} />
+          <Text style={styles.totauxTitle}>Total caisse en temps réel</Text>
+        </View>
+        <View style={styles.totauxGrid}>
+          <View style={styles.totauxCell}>
+            <Text style={styles.totauxCellLabel}>Cash</Text>
+            <Text style={[styles.totauxCellValue, { color: COLORS.cash }]}>
+              {ventesJour ? formatPrix(ventesJour.totalCash) : "—"}
+            </Text>
+          </View>
+          <View style={styles.totauxCellDivider} />
+          <View style={styles.totauxCell}>
+            <Text style={styles.totauxCellLabel}>Carte</Text>
+            <Text style={[styles.totauxCellValue, { color: COLORS.card_payment }]}>
+              {ventesJour ? formatPrix(ventesJour.totalCarte) : "—"}
+            </Text>
+          </View>
+          <View style={styles.totauxCellDivider} />
+          <View style={styles.totauxCell}>
+            <Text style={styles.totauxCellLabel}>Total</Text>
+            <Text style={[styles.totauxCellValue, { color: COLORS.accent }]}>
+              {ventesJour ? formatPrix(ventesJour.total) : "—"}
+            </Text>
+          </View>
+          <View style={styles.totauxCellDivider} />
+          <View style={styles.totauxCell}>
+            <Text style={styles.totauxCellLabel}>Ventes</Text>
+            <Text style={[styles.totauxCellValue, { color: COLORS.text }]}>
+              {nbVentes}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={{ flex: 1 }} />
+
+      <View style={[styles.stickyBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <Pressable style={styles.stickyBtn} onPress={onShowInventaire}>
+          <Feather name="package" size={20} color={COLORS.accent} />
+          <Text style={styles.stickyBtnText}>Inventaire</Text>
         </Pressable>
-        <View style={styles.bottomBtnDivider} />
-        <Pressable style={styles.bottomBtn} onPress={onShowVentesJour}>
-          <Feather name="list" size={17} color={COLORS.primary} />
-          <Text style={styles.bottomBtnText}>Ventes du Jour</Text>
+
+        <View style={styles.stickyDivider} />
+
+        <Pressable style={styles.stickyBtn} onPress={onShowVentesJour}>
+          <Feather name="list" size={20} color={COLORS.card_payment} />
+          <Text style={styles.stickyBtnText}>Ventes du Jour</Text>
+        </Pressable>
+
+        <View style={styles.stickyDivider} />
+
+        <Pressable style={styles.stickyBtn} onPress={onShowPanier}>
+          <View>
+            <Feather name="shopping-cart" size={20} color={cartCount > 0 ? COLORS.cash : COLORS.textSecondary} />
+            {cartCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{cartCount}</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.stickyBtnText, cartCount > 0 && { color: COLORS.cash }]}>
+            Panier{cartCount > 0 ? ` (${cartCount})` : ""}
+          </Text>
         </Pressable>
       </View>
     </View>
   );
 }
-
 
 const styles = StyleSheet.create({
   container: {
@@ -626,7 +720,7 @@ const styles = StyleSheet.create({
   },
   activeActions: {
     paddingHorizontal: 20,
-    marginBottom: 20,
+    marginBottom: 16,
     flexDirection: "row",
     gap: 12,
   },
@@ -666,113 +760,93 @@ const styles = StyleSheet.create({
     color: "#fff",
     letterSpacing: -0.2,
   },
-  bottomActions: {
-    flexDirection: "row",
+
+  totauxPanel: {
     marginHorizontal: 20,
-    marginTop: 8,
-    marginBottom: 8,
-    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
     borderWidth: 1.5,
     borderColor: COLORS.border,
-    backgroundColor: COLORS.card,
-    overflow: "hidden",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 12,
   },
-  bottomBtn: {
-    flex: 1,
+  totauxHeader: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
+    gap: 7,
   },
-  bottomBtnDivider: {
-    width: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 10,
-  },
-  bottomBtnText: {
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-    color: COLORS.text,
-  },
-  stockHeader: {
-    fontSize: 11,
+  totauxTitle: {
+    fontSize: 12,
     fontFamily: "Inter_600SemiBold",
     color: COLORS.textSecondary,
     textTransform: "uppercase",
-    letterSpacing: 1.5,
-    paddingHorizontal: 20,
-    marginBottom: 12,
+    letterSpacing: 1,
   },
-  colCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  colHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  colName: {
-    fontSize: 15,
-    fontFamily: "Inter_700Bold",
-    color: COLORS.text,
-  },
-  colTotal: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: COLORS.textSecondary,
-  },
-  stockRow: {
+  totauxGrid: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
   },
-  colorDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  totauxCell: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
   },
-  stockRowLabel: {
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
-    color: COLORS.text,
-    textTransform: "capitalize",
+  totauxCellDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: COLORS.border,
   },
-  stockRowPrice: {
+  totauxCellLabel: {
     fontSize: 11,
     fontFamily: "Inter_400Regular",
-    color: COLORS.accent,
-  },
-  stockRowQty: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-  },
-  stockOk: { color: COLORS.success },
-  stockLow: { color: "#F59E0B" },
-  stockEmpty: { color: COLORS.danger },
-  emptyProducts: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary,
-    textAlign: "center",
-    paddingVertical: 8,
   },
-  emptyState: {
+  totauxCellValue: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: -0.5,
+  },
+
+  stickyBar: {
+    flexDirection: "row",
+    backgroundColor: COLORS.card,
+    borderTopWidth: 1.5,
+    borderTopColor: COLORS.border,
+    paddingTop: 12,
+  },
+  stickyBtn: {
+    flex: 1,
     alignItems: "center",
-    paddingVertical: 40,
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 4,
   },
-  emptyText: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
+  stickyBtnText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
     color: COLORS.textSecondary,
+  },
+  stickyDivider: {
+    width: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 4,
+  },
+  cartBadge: {
+    position: "absolute",
+    top: -6,
+    right: -10,
+    backgroundColor: COLORS.cash,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  cartBadgeText: {
+    fontSize: 10,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
 });

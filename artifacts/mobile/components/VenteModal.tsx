@@ -13,76 +13,27 @@ import {
 
 import Colors from "@/constants/colors";
 import { formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import {
+  computePromo,
+  type CartItem,
+  type PromoResult,
+} from "@/lib/cart";
 
 const COLORS = Colors.light;
-
-type CartItem = {
-  produit: Produit & { collectionNom: string };
-  quantite: number;
-};
-
-type FreeDetail = {
-  produitId: number;
-  couleur: string;
-  collectionNom: string;
-  prixCentimes: number;
-  count: number;
-};
-
-type PromoResult = {
-  nbFree: number;
-  discountCentimes: number;
-  freeDetails: FreeDetail[];
-};
-
-function computePromo(cart: CartItem[]): PromoResult {
-  const units: { produitId: number; couleur: string; collectionNom: string; prixCentimes: number }[] = [];
-  for (const item of cart) {
-    for (let i = 0; i < item.quantite; i++) {
-      units.push({
-        produitId: item.produit.id,
-        couleur: item.produit.couleur,
-        collectionNom: item.produit.collectionNom,
-        prixCentimes: item.produit.prixCentimes,
-      });
-    }
-  }
-
-  const totalUnits = units.length;
-  const nbFree = Math.floor(totalUnits / 3);
-  if (nbFree === 0) return { nbFree: 0, discountCentimes: 0, freeDetails: [] };
-
-  units.sort((a, b) => a.prixCentimes - b.prixCentimes);
-
-  const freeUnits = units.slice(0, nbFree);
-
-  const discountCentimes = freeUnits.reduce((s, u) => s + u.prixCentimes, 0);
-
-  const freeMap = new Map<number, FreeDetail>();
-  for (const u of freeUnits) {
-    const existing = freeMap.get(u.produitId);
-    if (existing) {
-      existing.count += 1;
-    } else {
-      freeMap.set(u.produitId, { ...u, count: 1 });
-    }
-  }
-
-  return { nbFree, discountCentimes, freeDetails: Array.from(freeMap.values()) };
-}
 
 type Props = {
   visible: boolean;
   collections: CollectionWithProduits[];
   defaultPaymentMode?: "cash" | "carte";
+  cart: CartItem[];
+  onCartChange: (cart: CartItem[]) => void;
   onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
   onClose: () => void;
 };
 
-export function VenteModal({ visible, collections, defaultPaymentMode, onVente, onClose }: Props) {
+export function VenteModal({ visible, collections, defaultPaymentMode, cart, onCartChange, onVente, onClose }: Props) {
   const [view, setView] = useState<"collections" | "produits">("collections");
   const [selectedCollection, setSelectedCollection] = useState<CollectionWithProduits | null>(null);
-  const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMode, setPaymentMode] = useState<"cash" | "carte" | null>(defaultPaymentMode ?? null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -100,13 +51,17 @@ export function VenteModal({ visible, collections, defaultPaymentMode, onVente, 
 
   const updateCart = (produit: Produit & { collectionNom: string }, delta: number) => {
     Haptics.selectionAsync();
-    setCart((prev) => {
-      const current = prev.find((i) => i.produit.id === produit.id)?.quantite ?? 0;
-      const next = Math.max(0, Math.min(produit.quantite, current + delta));
-      if (next === 0) return prev.filter((i) => i.produit.id !== produit.id);
-      if (current > 0) return prev.map((i) => i.produit.id === produit.id ? { ...i, quantite: next } : i);
-      return [...prev, { produit, quantite: next }];
-    });
+    const current = cart.find((i) => i.produit.id === produit.id)?.quantite ?? 0;
+    const next = Math.max(0, Math.min(produit.quantite, current + delta));
+    let newCart: CartItem[];
+    if (next === 0) {
+      newCart = cart.filter((i) => i.produit.id !== produit.id);
+    } else if (current > 0) {
+      newCart = cart.map((i) => i.produit.id === produit.id ? { ...i, quantite: next } : i);
+    } else {
+      newCart = [...cart, { produit, quantite: next }];
+    }
+    onCartChange(newCart);
   };
 
   const handleConfirm = async () => {
@@ -120,7 +75,7 @@ export function VenteModal({ visible, collections, defaultPaymentMode, onVente, 
       setTimeout(() => {
         setSuccess(false);
         setSuccessSnapshot(null);
-        setCart([]);
+        onCartChange([]);
         setView("collections");
         setSelectedCollection(null);
         setPaymentMode(defaultPaymentMode ?? null);
@@ -132,7 +87,6 @@ export function VenteModal({ visible, collections, defaultPaymentMode, onVente, 
   };
 
   const handleClose = () => {
-    setCart([]);
     setView("collections");
     setSelectedCollection(null);
     setPaymentMode(defaultPaymentMode ?? null);
@@ -695,17 +649,17 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   productPrice: {
-    fontSize: 13,
-    fontFamily: "Inter_700Bold",
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
   },
   productStock: {
     fontSize: 12,
-    fontFamily: "Inter_500Medium",
+    fontFamily: "Inter_400Regular",
   },
   qtyControl: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
   },
   qtyBtn: {
     width: 32,
@@ -714,23 +668,50 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: COLORS.card,
   },
   qtyValue: {
-    fontSize: 17,
+    fontSize: 16,
     fontFamily: "Inter_700Bold",
     color: COLORS.text,
-    minWidth: 24,
+    minWidth: 20,
     textAlign: "center",
   },
+  emptyText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+    textAlign: "center",
+    paddingVertical: 24,
+  },
+  successContainer: {
+    alignItems: "center",
+    paddingVertical: 48,
+    gap: 12,
+  },
+  successIcon: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  successText: {
+    fontSize: 22,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: -0.5,
+  },
+  successSub: {
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+  },
   cartFooter: {
-    marginTop: 4,
-    marginHorizontal: 16,
-    padding: 14,
-    borderRadius: 18,
-    backgroundColor: COLORS.background,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    gap: 12,
   },
   cartSummary: {
     gap: 6,
@@ -741,36 +722,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cartSummaryLabel: {
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary,
   },
   cartSummaryValue: {
-    fontSize: 13,
+    fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: COLORS.textSecondary,
+    color: COLORS.text,
   },
   promoBanner: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: COLORS.promo + "15",
+    backgroundColor: COLORS.promo + "12",
     borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: COLORS.promo + "40",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
   promoBannerLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 7,
     flex: 1,
   },
   promoBannerTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
     color: COLORS.promo,
+    flexShrink: 1,
   },
   promoDiscount: {
     fontSize: 14,
@@ -787,19 +767,18 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: COLORS.textSecondary,
-    textTransform: "capitalize",
-  },
-  promoDetailPrice: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
     color: COLORS.promo,
   },
+  promoDetailPrice: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.promo + "AA",
+  },
   cartTotalRow: {
-    paddingTop: 4,
+    paddingTop: 8,
+    marginTop: 2,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
-    marginTop: 2,
   },
   cartTotalLabel: {
     fontSize: 15,
@@ -807,8 +786,9 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
   cartTotalValue: {
-    fontSize: 22,
+    fontSize: 18,
     fontFamily: "Inter_700Bold",
+    letterSpacing: -0.3,
   },
   cartInfo: {
     flexDirection: "row",
@@ -817,12 +797,13 @@ const styles = StyleSheet.create({
   },
   cartItemCount: {
     fontSize: 14,
-    fontFamily: "Inter_500Medium",
+    fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary,
   },
   cartTotal: {
-    fontSize: 22,
+    fontSize: 18,
     fontFamily: "Inter_700Bold",
+    letterSpacing: -0.3,
   },
   paymentRow: {
     flexDirection: "row",
@@ -833,12 +814,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingVertical: 11,
+    gap: 7,
+    paddingVertical: 12,
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: COLORS.border,
-    backgroundColor: COLORS.card,
+    backgroundColor: COLORS.background,
   },
   payModeBtnCash: {
     backgroundColor: COLORS.cash,
@@ -858,40 +839,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    padding: 16,
-    borderRadius: 14,
+    paddingVertical: 16,
+    borderRadius: 16,
   },
   confirmText: {
-    fontSize: 15,
+    fontSize: 16,
     fontFamily: "Inter_700Bold",
     color: "#fff",
-  },
-  successContainer: {
-    alignItems: "center",
-    paddingVertical: 52,
-    gap: 12,
-  },
-  successIcon: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  successText: {
-    fontSize: 22,
-    fontFamily: "Inter_700Bold",
-  },
-  successSub: {
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    color: COLORS.textSecondary,
-  },
-  emptyText: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: COLORS.textSecondary,
-    textAlign: "center",
-    paddingVertical: 32,
+    letterSpacing: -0.3,
   },
 });
