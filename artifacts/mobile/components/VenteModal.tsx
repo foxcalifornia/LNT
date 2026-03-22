@@ -24,19 +24,19 @@ type CartItem = {
 type Props = {
   visible: boolean;
   collections: CollectionWithProduits[];
-  paymentMode: "cash" | "carte";
-  onVente: (items: { produitId: number; quantite: number }[]) => Promise<void>;
+  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
   onClose: () => void;
 };
 
-export function VenteModal({ visible, collections, paymentMode, onVente, onClose }: Props) {
+export function VenteModal({ visible, collections, onVente, onClose }: Props) {
   const [view, setView] = useState<"collections" | "produits">("collections");
   const [selectedCollection, setSelectedCollection] = useState<CollectionWithProduits | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [paymentMode, setPaymentMode] = useState<"cash" | "carte" | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const color = paymentMode === "carte" ? COLORS.card_payment : COLORS.cash;
+  const color = paymentMode === "carte" ? COLORS.card_payment : paymentMode === "cash" ? COLORS.cash : COLORS.accent;
 
   const totalItems = cart.reduce((sum, i) => sum + i.quantite, 0);
   const totalCentimes = cart.reduce((sum, i) => sum + i.produit.prixCentimes * i.quantite, 0);
@@ -56,10 +56,10 @@ export function VenteModal({ visible, collections, paymentMode, onVente, onClose
   };
 
   const handleConfirm = async () => {
-    if (cart.length === 0 || loading) return;
+    if (cart.length === 0 || loading || !paymentMode) return;
     setLoading(true);
     try {
-      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })));
+      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), paymentMode);
       setSuccess(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setTimeout(() => {
@@ -67,6 +67,7 @@ export function VenteModal({ visible, collections, paymentMode, onVente, onClose
         setCart([]);
         setView("collections");
         setSelectedCollection(null);
+        setPaymentMode(null);
         onClose();
       }, 1500);
     } catch {
@@ -78,6 +79,7 @@ export function VenteModal({ visible, collections, paymentMode, onVente, onClose
     setCart([]);
     setView("collections");
     setSelectedCollection(null);
+    setPaymentMode(null);
     setSuccess(false);
     onClose();
   };
@@ -145,7 +147,8 @@ export function VenteModal({ visible, collections, paymentMode, onVente, onClose
             <CartFooter
               totalItems={totalItems}
               totalCentimes={totalCentimes}
-              color={color}
+              paymentMode={paymentMode}
+              onSelectPayment={setPaymentMode}
               loading={loading}
               onConfirm={handleConfirm}
             />
@@ -320,16 +323,20 @@ function ProduitsView({
 function CartFooter({
   totalItems,
   totalCentimes,
-  color,
+  paymentMode,
+  onSelectPayment,
   loading,
   onConfirm,
 }: {
   totalItems: number;
   totalCentimes: number;
-  color: string;
+  paymentMode: "cash" | "carte" | null;
+  onSelectPayment: (mode: "cash" | "carte") => void;
   loading: boolean;
   onConfirm: () => void;
 }) {
+  const confirmColor = paymentMode === "carte" ? COLORS.card_payment : paymentMode === "cash" ? COLORS.cash : COLORS.accent;
+
   return (
     <View style={styles.cartFooter}>
       <View style={styles.cartInfo}>
@@ -337,20 +344,40 @@ function CartFooter({
           {totalItems} article{totalItems !== 1 ? "s" : ""}
         </Text>
         {totalCentimes > 0 && (
-          <Text style={[styles.cartTotal, { color }]}>{formatPrix(totalCentimes)}</Text>
+          <Text style={[styles.cartTotal, { color: confirmColor }]}>{formatPrix(totalCentimes)}</Text>
         )}
       </View>
+
+      <View style={styles.paymentRow}>
+        <Pressable
+          style={[styles.payModeBtn, paymentMode === "cash" && styles.payModeBtnCash]}
+          onPress={() => { Haptics.selectionAsync(); onSelectPayment("cash"); }}
+        >
+          <Feather name="dollar-sign" size={16} color={paymentMode === "cash" ? "#fff" : COLORS.cash} />
+          <Text style={[styles.payModeBtnText, paymentMode === "cash" && { color: "#fff" }]}>Cash</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.payModeBtn, paymentMode === "carte" && styles.payModeBtnCarte]}
+          onPress={() => { Haptics.selectionAsync(); onSelectPayment("carte"); }}
+        >
+          <Feather name="credit-card" size={16} color={paymentMode === "carte" ? "#fff" : COLORS.card_payment} />
+          <Text style={[styles.payModeBtnText, paymentMode === "carte" && { color: "#fff" }]}>Carte</Text>
+        </Pressable>
+      </View>
+
       <Pressable
-        style={[styles.confirmBtn, { backgroundColor: color }, loading && { opacity: 0.7 }]}
+        style={[styles.confirmBtn, { backgroundColor: confirmColor }, (loading || !paymentMode) && { opacity: 0.45 }]}
         onPress={onConfirm}
-        disabled={loading}
+        disabled={loading || !paymentMode}
       >
         {loading ? (
           <ActivityIndicator color="#fff" size="small" />
         ) : (
           <>
             <Feather name="check" size={20} color="#fff" />
-            <Text style={styles.confirmText}>Confirmer la Vente</Text>
+            <Text style={styles.confirmText}>
+              {paymentMode ? "Confirmer la Vente" : "Choisir le mode de paiement"}
+            </Text>
           </>
         )}
       </Pressable>
@@ -563,6 +590,35 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     gap: 10,
+  },
+  paymentRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  payModeBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+  },
+  payModeBtnCash: {
+    backgroundColor: COLORS.cash,
+    borderColor: COLORS.cash,
+  },
+  payModeBtnCarte: {
+    backgroundColor: COLORS.card_payment,
+    borderColor: COLORS.card_payment,
+  },
+  payModeBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.text,
   },
   cartInfo: {
     flexDirection: "row",

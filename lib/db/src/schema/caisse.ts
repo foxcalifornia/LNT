@@ -7,7 +7,7 @@ export const sessionsTable = pgTable("sessions_caisse", {
   date: text("date").notNull(),
   heure: text("heure").notNull(),
   localisation: text("localisation"),
-  typePaiement: text("type_paiement").notNull(),
+  typePaiement: text("type_paiement"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

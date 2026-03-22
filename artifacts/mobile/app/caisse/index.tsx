@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,59 +13,92 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import Colors from "@/constants/colors";
 import { api, formatPrix, type Session, type CollectionWithProduits, type Produit } from "@/lib/api";
 import { VenteModal } from "@/components/VenteModal";
+import { PasswordModal } from "@/components/PasswordModal";
 
 const COLORS = Colors.light;
 
-type PaymentMode = "cash" | "carte" | null;
+type CaisseState = "checking" | "closed_hours" | "need_open" | "active";
 
 function getTodayFr() {
   return new Date().toLocaleDateString("fr-FR");
 }
 
-function getHeureActuelle() {
-  return new Date().getHours();
+function isCaisseHours() {
+  const h = new Date().getHours();
+  return h >= 10 && h < 20;
 }
 
-function isCaisseHours() {
-  const h = getHeureActuelle();
-  return h >= 10 && h < 20;
+function getHeureStr() {
+  return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function getTodayLabel() {
+  return new Date().toLocaleDateString("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
 }
 
 export default function CaisseScreen() {
   const insets = useSafeAreaInsets();
-  const [paymentMode, setPaymentMode] = useState<PaymentMode>(null);
-  const [loading, setLoading] = useState(false);
-  const [showVente, setShowVente] = useState(false);
+  const queryClient = useQueryClient();
+  const [caisseState, setCaisseState] = useState<CaisseState>("checking");
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
-  const [manuallyClosedId, setManuallyClosedId] = useState<number | null>(null);
-
-  const { data: sessions = [], refetch: refetchSessions } = useQuery({
-    queryKey: ["sessions"],
-    queryFn: api.caisse.getSessions,
-  });
+  const [showVente, setShowVente] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [openingLoading, setOpeningLoading] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data: collections = [], refetch: refetchCollections } = useQuery({
     queryKey: ["collections"],
     queryFn: api.inventory.getCollections,
   });
 
-  useEffect(() => {
-    if (sessions.length === 0 || currentSession || paymentMode) return;
-    const today = getTodayFr();
-    const todaySession = sessions.find((s) => s.date === today);
-    if (todaySession && todaySession.id !== manuallyClosedId) {
-      setCurrentSession(todaySession);
-      setPaymentMode(todaySession.typePaiement === "CASH" ? "cash" : "carte");
+  const checkTodaySession = useCallback(async () => {
+    try {
+      const sessions = await api.caisse.getSessions();
+      const today = getTodayFr();
+      const todaySession = sessions.find((s) => s.date === today);
+      if (todaySession) {
+        setCurrentSession(todaySession);
+        setCaisseState(isCaisseHours() ? "active" : "closed_hours");
+      } else {
+        setCaisseState(isCaisseHours() ? "need_open" : "closed_hours");
+      }
+    } catch {
+      setCaisseState(isCaisseHours() ? "need_open" : "closed_hours");
     }
-  }, [sessions, currentSession, paymentMode, manuallyClosedId]);
+  }, []);
 
-  const openCaisse = async (mode: PaymentMode) => {
-    setLoading(true);
+  useEffect(() => {
+    checkTodaySession();
+
+    intervalRef.current = setInterval(() => {
+      if (!isCaisseHours()) {
+        setCaisseState((prev) => {
+          if (prev === "active") {
+            setCurrentSession(null);
+            return "closed_hours";
+          }
+          if (prev === "need_open") return "closed_hours";
+          return prev;
+        });
+      }
+    }, 30000);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [checkTodaySession]);
+
+  const openCaisse = async () => {
+    setOpeningLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
     try {
@@ -93,25 +126,21 @@ export default function CaisseScreen() {
         localisation = null;
       }
 
-      const session = await api.caisse.createSession({
-        date,
-        heure,
-        localisation,
-        typePaiement: mode === "cash" ? "CASH" : "CARTE",
-      });
-
+      const session = await api.caisse.createSession({ date, heure, localisation });
       setCurrentSession(session);
-      setPaymentMode(mode);
-      refetchSessions();
+      setCaisseState("active");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
       Alert.alert("Erreur", err.message ?? "Une erreur est survenue");
     } finally {
-      setLoading(false);
+      setOpeningLoading(false);
     }
   };
 
-  const handleVente = async (items: { produitId: number; quantite: number }[]) => {
+  const handleVente = async (
+    items: { produitId: number; quantite: number }[],
+    paymentMode: "cash" | "carte"
+  ) => {
     if (!currentSession) return;
     for (const item of items) {
       await api.inventory.createVente({
@@ -125,9 +154,21 @@ export default function CaisseScreen() {
 
   const closeCaisse = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (currentSession) setManuallyClosedId(currentSession.id);
-    setPaymentMode(null);
-    setCurrentSession(null);
+    Alert.alert(
+      "Fermer la caisse ?",
+      "La session sera fermée. Il faudra saisir le mot de passe demain pour réouvrir.",
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Fermer",
+          style: "destructive",
+          onPress: () => {
+            setCurrentSession(null);
+            setCaisseState(isCaisseHours() ? "need_open" : "closed_hours");
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -140,78 +181,41 @@ export default function CaisseScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      {!paymentMode ? (
-        <View style={styles.selectionContent}>
-          {isCaisseHours() ? (
-            <>
-              <View style={styles.selectionHeader}>
-                <View style={styles.iconCircle}>
-                  <Feather name="shopping-bag" size={32} color={COLORS.cash} />
-                </View>
-                <Text style={styles.selectionTitle}>Ouvrir la Caisse</Text>
-                <Text style={styles.selectionSubtitle}>
-                  Choisissez le mode de paiement pour cette session
-                </Text>
-              </View>
-
-              <View style={styles.paymentOptions}>
-                <PaymentCard
-                  icon="dollar-sign"
-                  label="Cash"
-                  color={COLORS.cash}
-                  bgColor="#ECFDF5"
-                  onPress={() => openCaisse("cash")}
-                  loading={loading}
-                />
-                <PaymentCard
-                  icon="credit-card"
-                  label="Carte Bancaire"
-                  color={COLORS.card_payment}
-                  bgColor="#EFF6FF"
-                  onPress={() => openCaisse("carte")}
-                  loading={loading}
-                />
-              </View>
-            </>
-          ) : (
-            <View style={styles.closedContainer}>
-              <View style={styles.closedIcon}>
-                <Feather name="moon" size={36} color={COLORS.textSecondary} />
-              </View>
-              <Text style={styles.closedTitle}>Caisse Fermée</Text>
-              <Text style={styles.closedSubtitle}>
-                Ouverte du lundi au dimanche{"\n"}de 10h00 à 20h00
-              </Text>
-            </View>
-          )}
-
-          {sessions.length > 0 && (
-            <View style={styles.recentSessions}>
-              <Text style={styles.sectionLabel}>Sessions récentes</Text>
-              <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 200 }}>
-                {sessions.slice(0, 5).map((s) => (
-                  <SessionItem key={s.id} session={s} />
-                ))}
-              </ScrollView>
-            </View>
-          )}
+      {caisseState === "checking" ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator color={COLORS.accent} size="large" />
+          <Text style={styles.checkingText}>Vérification en cours…</Text>
         </View>
+      ) : caisseState === "closed_hours" ? (
+        <ClosedView hasSession={!!currentSession} session={currentSession} />
+      ) : caisseState === "need_open" ? (
+        <NeedOpenView
+          loading={openingLoading}
+          onOpen={() => setShowPassword(true)}
+        />
       ) : (
         <ActiveCaisseView
-          mode={paymentMode}
           session={currentSession}
           collections={collections}
-          onVente={handleVente}
           onClose={closeCaisse}
           onShowVente={() => setShowVente(true)}
         />
       )}
 
+      <PasswordModal
+        visible={showPassword}
+        title="Ouverture de Caisse"
+        onSuccess={() => {
+          setShowPassword(false);
+          openCaisse();
+        }}
+        onCancel={() => setShowPassword(false)}
+      />
+
       {showVente && (
         <VenteModal
           visible={showVente}
           collections={collections}
-          paymentMode={paymentMode ?? "cash"}
           onVente={handleVente}
           onClose={() => setShowVente(false)}
         />
@@ -220,103 +224,117 @@ export default function CaisseScreen() {
   );
 }
 
-type PaymentCardProps = {
-  icon: string;
-  label: string;
-  color: string;
-  bgColor: string;
-  onPress: () => void;
+function NeedOpenView({
+  loading,
+  onOpen,
+}: {
   loading: boolean;
-};
+  onOpen: () => void;
+}) {
+  const now = new Date();
+  const dateLabel = getTodayLabel();
+  const heureLabel = getHeureStr();
 
-function PaymentCard({ icon, label, color, bgColor, onPress, loading }: PaymentCardProps) {
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.paymentCard,
-        { opacity: pressed || loading ? 0.85 : 1, transform: [{ scale: pressed ? 0.97 : 1 }] },
-      ]}
-      onPress={onPress}
-      disabled={loading}
-    >
-      <View style={[styles.paymentCardIcon, { backgroundColor: bgColor }]}>
-        {loading ? (
-          <ActivityIndicator color={color} />
-        ) : (
-          <Feather name={icon as any} size={36} color={color} />
-        )}
-      </View>
-      <Text style={[styles.paymentCardLabel, { color }]}>{label}</Text>
-    </Pressable>
-  );
-}
+    <View style={styles.openingContent}>
+      <View style={styles.openingTop}>
+        <View style={styles.openingIconRing}>
+          <View style={styles.openingIconInner}>
+            <Feather name="shopping-bag" size={36} color={COLORS.accent} />
+          </View>
+        </View>
 
-type SessionItemProps = { session: Session };
+        <Text style={styles.openingTitle}>Bonjour !</Text>
+        <Text style={styles.openingDate}>{dateLabel}</Text>
+        <Text style={styles.openingTime}>{heureLabel}</Text>
 
-function SessionItem({ session }: SessionItemProps) {
-  const isCard = session.typePaiement === "CARTE";
-  return (
-    <View style={styles.sessionItem}>
-      <View style={[styles.sessionDot, { backgroundColor: isCard ? COLORS.card_payment : COLORS.cash }]} />
-      <View style={styles.sessionInfo}>
-        <Text style={styles.sessionDate}>
-          {session.date} à {session.heure}
-        </Text>
-        {session.localisation && (
-          <Text style={styles.sessionLocation} numberOfLines={1}>
-            <Feather name="map-pin" size={11} color={COLORS.textSecondary} /> {session.localisation}
-          </Text>
-        )}
+        <View style={styles.openingHoursRow}>
+          <Feather name="clock" size={13} color={COLORS.textSecondary} />
+          <Text style={styles.openingHoursText}>Horaires : 10h00 – 20h00</Text>
+        </View>
       </View>
-      <View style={[styles.sessionBadge, { backgroundColor: isCard ? "#EFF6FF" : "#ECFDF5" }]}>
-        <Text style={[styles.sessionBadgeText, { color: isCard ? COLORS.card_payment : COLORS.cash }]}>
-          {isCard ? "CARTE" : "CASH"}
+
+      <View style={styles.openingBottom}>
+        <Pressable
+          style={[styles.openBtn, loading && { opacity: 0.6 }]}
+          onPress={onOpen}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Feather name="unlock" size={22} color="#fff" />
+              <Text style={styles.openBtnText}>Ouvrir la Caisse</Text>
+            </>
+          )}
+        </Pressable>
+        <Text style={styles.openBtnHint}>
+          Un mot de passe vous sera demandé pour confirmer l'ouverture
         </Text>
       </View>
     </View>
   );
 }
 
+function ClosedView({
+  hasSession,
+  session,
+}: {
+  hasSession: boolean;
+  session: Session | null;
+}) {
+  return (
+    <View style={styles.closedContent}>
+      <View style={styles.closedIcon}>
+        <Feather name="moon" size={40} color={COLORS.textSecondary} />
+      </View>
+      <Text style={styles.closedTitle}>Caisse Fermée</Text>
+      <Text style={styles.closedSubtitle}>
+        Ouverte du lundi au dimanche{"\n"}de 10h00 à 20h00
+      </Text>
+      {session && (
+        <View style={styles.closedSessionInfo}>
+          <Feather name="check-circle" size={14} color={COLORS.success} />
+          <Text style={styles.closedSessionText}>
+            Ouverte aujourd'hui à {session.heure}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 type ActiveCaisseViewProps = {
-  mode: "cash" | "carte";
   session: Session | null;
   collections: CollectionWithProduits[];
-  onVente: (items: { produitId: number; quantite: number }[]) => Promise<void>;
   onClose: () => void;
   onShowVente: () => void;
 };
 
-function ActiveCaisseView({ mode, session, collections, onVente, onClose, onShowVente }: ActiveCaisseViewProps) {
-  const isCard = mode === "carte";
-  const color = isCard ? COLORS.card_payment : COLORS.cash;
-  const bgColor = isCard ? "#EFF6FF" : "#ECFDF5";
-
+function ActiveCaisseView({ session, collections, onClose, onShowVente }: ActiveCaisseViewProps) {
   return (
     <View style={styles.activeCaisse}>
-      <View style={[styles.sessionBanner, { backgroundColor: bgColor, borderColor: color + "30" }]}>
+      <View style={styles.sessionBanner}>
         <View style={styles.sessionBannerLeft}>
-          <Feather name={isCard ? "credit-card" : "dollar-sign"} size={20} color={color} />
+          <View style={styles.openDot} />
           <View>
-            <Text style={[styles.sessionBannerTitle, { color }]}>
-              {isCard ? "Carte Bancaire" : "Cash"} · Caisse Ouverte
-            </Text>
+            <Text style={styles.sessionBannerTitle}>Caisse Ouverte</Text>
             {session && (
               <Text style={styles.sessionBannerSub}>
-                {session.date} à {session.heure}
+                Depuis {session.heure}
+                {session.localisation ? `  ·  ${session.localisation}` : ""}
               </Text>
             )}
           </View>
         </View>
         <Pressable onPress={onClose} style={styles.closeSessionBtn}>
-          <Feather name="x" size={18} color={COLORS.textSecondary} />
+          <Feather name="log-out" size={17} color={COLORS.textSecondary} />
         </Pressable>
       </View>
 
       <View style={styles.activeActions}>
-        <Pressable
-          style={[styles.venteBtn, { backgroundColor: color }]}
-          onPress={onShowVente}
-        >
+        <Pressable style={styles.venteBtn} onPress={onShowVente}>
           <Feather name="plus" size={22} color="#fff" />
           <Text style={styles.venteBtnText}>Enregistrer une Vente</Text>
         </Pressable>
@@ -324,12 +342,20 @@ function ActiveCaisseView({ mode, session, collections, onVente, onClose, onShow
 
       <Text style={styles.stockHeader}>Stock Disponible</Text>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+      >
         {collections.map((col) => (
           <View key={col.id} style={styles.colCard}>
-            <Text style={styles.colName}>{col.nom}</Text>
+            <View style={styles.colHeader}>
+              <Text style={styles.colName}>{col.nom}</Text>
+              <Text style={styles.colTotal}>
+                {col.produits.reduce((s, p) => s + p.quantite, 0)} paires
+              </Text>
+            </View>
             {col.produits.map((p) => (
-              <QuickStockRow key={p.id} produit={p} color={color} onVente={onVente} />
+              <StockRow key={p.id} produit={p} />
             ))}
             {col.produits.length === 0 && (
               <Text style={styles.emptyProducts}>Aucun produit</Text>
@@ -346,23 +372,7 @@ function ActiveCaisseView({ mode, session, collections, onVente, onClose, onShow
   );
 }
 
-type QuickStockRowProps = {
-  produit: Produit;
-  color: string;
-  onVente: (items: { produitId: number; quantite: number }[]) => Promise<void>;
-};
-
-function QuickStockRow({ produit, color, onVente }: QuickStockRowProps) {
-  const [loading, setLoading] = useState(false);
-
-  const handleQuickSell = async () => {
-    if (produit.quantite <= 0 || loading) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setLoading(true);
-    await onVente([{ produitId: produit.id, quantite: 1 }]);
-    setLoading(false);
-  };
-
+function StockRow({ produit }: { produit: Produit }) {
   const isLow = produit.quantite <= 2 && produit.quantite > 0;
   const isEmpty = produit.quantite === 0;
 
@@ -375,20 +385,14 @@ function QuickStockRow({ produit, color, onVente }: QuickStockRowProps) {
           <Text style={styles.stockRowPrice}>{formatPrix(produit.prixCentimes)}</Text>
         )}
       </View>
-      <Text style={[styles.stockRowQty, isEmpty ? styles.stockEmpty : isLow ? styles.stockLow : styles.stockOk]}>
+      <Text
+        style={[
+          styles.stockRowQty,
+          isEmpty ? styles.stockEmpty : isLow ? styles.stockLow : styles.stockOk,
+        ]}
+      >
         {produit.quantite} paire{produit.quantite !== 1 ? "s" : ""}
       </Text>
-      <Pressable
-        style={[styles.quickSellBtn, { backgroundColor: isEmpty ? "#F3F4F6" : color + "15" }, loading && { opacity: 0.5 }]}
-        onPress={handleQuickSell}
-        disabled={isEmpty || loading}
-      >
-        {loading ? (
-          <ActivityIndicator size="small" color={color} />
-        ) : (
-          <Feather name="minus" size={16} color={isEmpty ? COLORS.textSecondary : color} />
-        )}
-      </Pressable>
     </View>
   );
 }
@@ -440,79 +444,120 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     letterSpacing: -0.3,
   },
-  selectionContent: {
+  centerContainer: {
     flex: 1,
-    paddingHorizontal: 20,
-  },
-  selectionHeader: {
+    justifyContent: "center",
     alignItems: "center",
-    paddingTop: 40,
-    paddingBottom: 32,
-    gap: 12,
+    gap: 16,
   },
-  iconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#ECFDF5",
+  checkingText: {
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+  },
+
+  openingContent: {
+    flex: 1,
+    justifyContent: "space-between",
+    paddingHorizontal: 24,
+    paddingBottom: 16,
+  },
+  openingTop: {
+    alignItems: "center",
+    paddingTop: 48,
+    gap: 10,
+  },
+  openingIconRing: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: "#FDF8F0",
+    borderWidth: 2,
+    borderColor: COLORS.accent + "30",
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 8,
   },
-  selectionTitle: {
-    fontSize: 22,
+  openingIconInner: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: "#FEF3C7",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  openingTitle: {
+    fontSize: 26,
     fontFamily: "Inter_700Bold",
     color: COLORS.text,
     letterSpacing: -0.5,
   },
-  selectionSubtitle: {
-    fontSize: 14,
+  openingDate: {
+    fontSize: 16,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.text,
+    textTransform: "capitalize",
+  },
+  openingTime: {
+    fontSize: 40,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.accent,
+    letterSpacing: -1,
+    lineHeight: 48,
+  },
+  openingHoursRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+  },
+  openingHoursText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+  },
+  openingBottom: {
+    gap: 12,
+    paddingBottom: 8,
+  },
+  openBtn: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 18,
+    paddingVertical: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  openBtnText: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+    letterSpacing: -0.3,
+  },
+  openBtnHint: {
+    fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary,
     textAlign: "center",
   },
-  paymentOptions: {
-    flexDirection: "row",
-    gap: 14,
-  },
-  paymentCard: {
+
+  closedContent: {
     flex: 1,
-    backgroundColor: COLORS.card,
-    borderRadius: 20,
-    padding: 24,
-    alignItems: "center",
-    gap: 14,
-    shadowColor: COLORS.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 16,
-    elevation: 4,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  paymentCardIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 18,
     justifyContent: "center",
     alignItems: "center",
-  },
-  paymentCardLabel: {
-    fontSize: 14,
-    fontFamily: "Inter_700Bold",
-    textAlign: "center",
-  },
-  closedContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 40,
-    gap: 14,
+    paddingHorizontal: 40,
+    gap: 12,
   },
   closedIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     backgroundColor: COLORS.border,
     justifyContent: "center",
     alignItems: "center",
@@ -522,7 +567,6 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontFamily: "Inter_700Bold",
     color: COLORS.text,
-    letterSpacing: -0.5,
   },
   closedSubtitle: {
     fontSize: 14,
@@ -531,55 +575,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
   },
-  recentSessions: {
-    marginTop: 32,
-    gap: 12,
-  },
-  sectionLabel: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: COLORS.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginBottom: 4,
-  },
-  sessionItem: {
+  closedSessionInfo: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    gap: 12,
+    gap: 6,
+    marginTop: 8,
+    backgroundColor: "#ECFDF5",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
-  sessionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  sessionInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  sessionDate: {
+  closedSessionText: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
-    color: COLORS.text,
+    color: COLORS.success,
   },
-  sessionLocation: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: COLORS.textSecondary,
-  },
-  sessionBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  sessionBadgeText: {
-    fontSize: 10,
-    fontFamily: "Inter_700Bold",
-    letterSpacing: 0.5,
-  },
+
   activeCaisse: {
     flex: 1,
   },
@@ -587,10 +598,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    margin: 20,
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 12,
     padding: 16,
+    backgroundColor: "#ECFDF5",
     borderRadius: 16,
     borderWidth: 1,
+    borderColor: "#BBF7D0",
   },
   sessionBannerLeft: {
     flexDirection: "row",
@@ -598,20 +613,31 @@ const styles = StyleSheet.create({
     gap: 12,
     flex: 1,
   },
+  openDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: COLORS.success,
+  },
   sessionBannerTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: "Inter_700Bold",
+    color: COLORS.success,
   },
   sessionBannerSub: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary,
+    marginTop: 2,
+    flexShrink: 1,
   },
   closeSessionBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: COLORS.border,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -624,16 +650,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    padding: 18,
+    backgroundColor: COLORS.primary,
     borderRadius: 16,
+    paddingVertical: 16,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
   },
   venteBtnText: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
     color: "#fff",
+    letterSpacing: -0.2,
   },
   stockHeader: {
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: "Inter_600SemiBold",
     color: COLORS.textSecondary,
     textTransform: "uppercase",
@@ -649,25 +682,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+  colHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   colName: {
     fontSize: 15,
     fontFamily: "Inter_700Bold",
     color: COLORS.text,
-    marginBottom: 10,
-    letterSpacing: -0.2,
+  },
+  colTotal: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary,
   },
   stockRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 8,
-    gap: 10,
+    paddingVertical: 10,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
   },
   colorDot: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
   },
   stockRowLabel: {
     fontSize: 14,
@@ -678,8 +720,7 @@ const styles = StyleSheet.create({
   stockRowPrice: {
     fontSize: 11,
     fontFamily: "Inter_400Regular",
-    color: COLORS.textSecondary,
-    marginTop: 1,
+    color: COLORS.accent,
   },
   stockRowQty: {
     fontSize: 13,
@@ -688,23 +729,16 @@ const styles = StyleSheet.create({
   stockOk: { color: COLORS.success },
   stockLow: { color: "#F59E0B" },
   stockEmpty: { color: COLORS.danger },
-  quickSellBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-  },
   emptyProducts: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary,
-    fontStyle: "italic",
-    paddingVertical: 4,
+    textAlign: "center",
+    paddingVertical: 8,
   },
   emptyState: {
-    paddingVertical: 40,
     alignItems: "center",
+    paddingVertical: 40,
   },
   emptyText: {
     fontSize: 14,

@@ -23,7 +23,7 @@ export type Session = {
   date: string;
   heure: string;
   localisation: string | null;
-  typePaiement: string;
+  typePaiement: string | null;
   createdAt: string;
 };
 
@@ -88,7 +88,7 @@ export function formatDateLabel(isoDate: string): string {
 export const api = {
   caisse: {
     getSessions: () => request<Session[]>("/caisse/sessions"),
-    createSession: (data: { date: string; heure: string; localisation?: string | null; typePaiement: string }) =>
+    createSession: (data: { date: string; heure: string; localisation?: string | null; typePaiement?: string | null }) =>
       request<Session>("/caisse/sessions", {
         method: "POST",
         body: JSON.stringify(data),
