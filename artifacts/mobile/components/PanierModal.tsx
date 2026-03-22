@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Modal,
   Pressable,
@@ -29,18 +30,45 @@ type Props = {
   collections: CollectionWithProduits[];
   onCartChange: (cart: CartItem[]) => void;
   onClose: () => void;
-  onOpenVente: (mode: "cash" | "carte") => void;
+  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
 };
 
-export function PanierModal({ visible, cart, collections, onCartChange, onClose, onOpenVente }: Props) {
+export function PanierModal({ visible, cart, collections, onCartChange, onClose, onVente }: Props) {
   const insets = useSafeAreaInsets();
   const [editingProduitId, setEditingProduitId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [successMode, setSuccessMode] = useState<"cash" | "carte" | null>(null);
+  const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number } | null>(null);
 
   const promo = computePromo(cart);
   const totalItems = cartTotalItems(cart);
   const totalCentimes = cartTotalCentimes(cart);
   const totalFinal = totalCentimes - promo.discountCentimes;
   const hasPromo = promo.nbFree > 0;
+
+  const handlePay = async (mode: "cash" | "carte") => {
+    if (cart.length === 0 || loading) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setLoading(true);
+    try {
+      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), mode);
+      setSuccessMode(mode);
+      setSuccessSnapshot({ items: totalItems, total: totalFinal });
+      setSuccess(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setTimeout(() => {
+        setSuccess(false);
+        setSuccessMode(null);
+        setSuccessSnapshot(null);
+        setLoading(false);
+        onCartChange([]);
+        onClose();
+      }, 1500);
+    } catch {
+      setLoading(false);
+    }
+  };
 
   const updateQty = (produitId: number, delta: number) => {
     Haptics.selectionAsync();
@@ -51,8 +79,7 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
       confirmDelete(produitId);
       return;
     }
-    const maxStock = item.produit.quantite;
-    const capped = Math.min(next, maxStock);
+    const capped = Math.min(next, item.produit.quantite);
     onCartChange(cart.map((i) => i.produit.id === produitId ? { ...i, quantite: capped } : i));
   };
 
@@ -76,10 +103,8 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     Haptics.selectionAsync();
     const oldItem = cart.find((i) => i.produit.id === oldProduitId);
     if (!oldItem) return;
-
     const alreadyInCart = cart.find((i) => i.produit.id === newProduit.id);
     let newCart: CartItem[];
-
     if (alreadyInCart) {
       const merged = Math.min(alreadyInCart.quantite + oldItem.quantite, newProduit.quantite);
       newCart = cart
@@ -91,7 +116,6 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
         .filter((i) => i.produit.id !== oldProduitId)
         .concat([{ produit: newProduit, quantite: qty }]);
     }
-
     onCartChange(newCart);
     setEditingProduitId(null);
   };
@@ -100,6 +124,8 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     Haptics.selectionAsync();
     setEditingProduitId((prev) => (prev === produitId ? null : produitId));
   };
+
+  const successColor = successMode === "carte" ? COLORS.card_payment : COLORS.cash;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -110,19 +136,36 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
           <View style={styles.header}>
             <View style={{ width: 36 }} />
             <Text style={styles.title}>
-              Panier actuel{totalItems > 0 ? ` · ${totalItems} article${totalItems > 1 ? "s" : ""}` : ""}
+              Panier{totalItems > 0 ? ` · ${totalItems} article${totalItems > 1 ? "s" : ""}` : ""}
             </Text>
             <Pressable onPress={onClose} style={styles.closeBtn}>
               <Feather name="x" size={18} color={COLORS.textSecondary} />
             </Pressable>
           </View>
 
-          {cart.length === 0 ? (
+          {success ? (
+            <View style={styles.successContainer}>
+              <View style={[styles.successIcon, { backgroundColor: successColor + "20" }]}>
+                <Feather name="check-circle" size={52} color={successColor} />
+              </View>
+              <Text style={[styles.successTitle, { color: successColor }]}>Vente enregistrée !</Text>
+              <Text style={styles.successSub}>
+                {successSnapshot?.items ?? 0} article{(successSnapshot?.items ?? 0) > 1 ? "s" : ""}
+                {successSnapshot && successSnapshot.total > 0 ? ` · ${formatPrix(successSnapshot.total)}` : ""}
+              </Text>
+              <View style={[styles.successModeBadge, { backgroundColor: successColor + "15", borderColor: successColor + "30" }]}>
+                <Feather name={successMode === "carte" ? "credit-card" : "dollar-sign"} size={14} color={successColor} />
+                <Text style={[styles.successModeText, { color: successColor }]}>
+                  Paiement {successMode === "carte" ? "Carte Bancaire" : "Cash"}
+                </Text>
+              </View>
+            </View>
+          ) : cart.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Feather name="shopping-cart" size={44} color={COLORS.border} />
               <Text style={styles.emptyTitle}>Panier vide</Text>
               <Text style={styles.emptySubtitle}>
-                Appuyez sur "Vente Cash" ou "Vente Carte" pour ajouter des articles
+                Appuyez sur "Faire une vente" pour ajouter des articles
               </Text>
             </View>
           ) : (
@@ -164,10 +207,7 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
 
                         <View style={styles.itemActions}>
                           <View style={styles.qtyRow}>
-                            <Pressable
-                              style={styles.qtyBtn}
-                              onPress={() => updateQty(item.produit.id, -1)}
-                            >
+                            <Pressable style={styles.qtyBtn} onPress={() => updateQty(item.produit.id, -1)}>
                               <Feather name="minus" size={14} color={COLORS.text} />
                             </Pressable>
                             <Text style={styles.qtyVal}>{item.quantite}</Text>
@@ -195,20 +235,13 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                             style={[styles.editBtn, isEditing && styles.editBtnActive]}
                             onPress={() => toggleEdit(item.produit.id)}
                           >
-                            <Feather
-                              name="edit-2"
-                              size={13}
-                              color={isEditing ? COLORS.accent : COLORS.textSecondary}
-                            />
+                            <Feather name="edit-2" size={13} color={isEditing ? COLORS.accent : COLORS.textSecondary} />
                             <Text style={[styles.editBtnText, isEditing && { color: COLORS.accent }]}>
                               {isEditing ? "Fermer" : "Changer le modèle"}
                             </Text>
                           </Pressable>
                         )}
-                        <Pressable
-                          style={styles.deleteBtn}
-                          onPress={() => confirmDelete(item.produit.id)}
-                        >
+                        <Pressable style={styles.deleteBtn} onPress={() => confirmDelete(item.produit.id)}>
                           <Feather name="trash-2" size={13} color={COLORS.danger} />
                           <Text style={styles.deleteBtnText}>Supprimer</Text>
                         </Pressable>
@@ -221,12 +254,7 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                             <Pressable
                               key={p.id}
                               style={styles.variantRow}
-                              onPress={() =>
-                                swapVariant(item.produit.id, {
-                                  ...p,
-                                  collectionNom: item.produit.collectionNom,
-                                })
-                              }
+                              onPress={() => swapVariant(item.produit.id, { ...p, collectionNom: item.produit.collectionNom })}
                             >
                               <View style={[styles.variantColorDot, { backgroundColor: getColorHex(p.couleur) }]} />
                               <View style={{ flex: 1 }}>
@@ -270,9 +298,7 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                             {fd.count > 1 ? `${fd.count}× ` : ""}{fd.collectionNom} – {fd.couleur}
                           </Text>
                           <Text style={styles.promoDetailPrice}>
-                            {fd.count > 1
-                              ? `${formatPrix(fd.prixCentimes)} × ${fd.count}`
-                              : formatPrix(fd.prixCentimes)}
+                            {fd.count > 1 ? `${formatPrix(fd.prixCentimes)} × ${fd.count}` : formatPrix(fd.prixCentimes)}
                           </Text>
                         </View>
                       ))}
@@ -287,20 +313,37 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
               </ScrollView>
 
               <View style={styles.footer}>
-                <Pressable
-                  style={[styles.payBtn, { backgroundColor: COLORS.cash }]}
-                  onPress={() => { onClose(); onOpenVente("cash"); }}
-                >
-                  <Feather name="dollar-sign" size={17} color="#fff" />
-                  <Text style={styles.payBtnText}>Payer Cash</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.payBtn, { backgroundColor: COLORS.card_payment }]}
-                  onPress={() => { onClose(); onOpenVente("carte"); }}
-                >
-                  <Feather name="credit-card" size={17} color="#fff" />
-                  <Text style={styles.payBtnText}>Payer Carte</Text>
-                </Pressable>
+                <Text style={styles.footerHint}>Choisir le mode de paiement</Text>
+                <View style={styles.payRow}>
+                  <Pressable
+                    style={[styles.payBtn, { backgroundColor: COLORS.cash }, loading && { opacity: 0.6 }]}
+                    onPress={() => handlePay("cash")}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Feather name="dollar-sign" size={17} color="#fff" />
+                        <Text style={styles.payBtnText}>Payer Cash</Text>
+                      </>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    style={[styles.payBtn, { backgroundColor: COLORS.card_payment }, loading && { opacity: 0.6 }]}
+                    onPress={() => handlePay("carte")}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Feather name="credit-card" size={17} color="#fff" />
+                        <Text style={styles.payBtnText}>Payer Carte</Text>
+                      </>
+                    )}
+                  </Pressable>
+                </View>
               </View>
             </>
           )}
@@ -322,15 +365,11 @@ function getColorHex(couleur: string): string {
 
 const styles = StyleSheet.create({
   overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "flex-end",
+    flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end",
   },
   sheet: {
     backgroundColor: COLORS.card,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    maxHeight: "92%",
+    borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: "92%",
   },
   handle: {
     width: 36, height: 4, borderRadius: 2,
@@ -352,6 +391,29 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.border,
     justifyContent: "center", alignItems: "center",
   },
+
+  successContainer: {
+    alignItems: "center", paddingVertical: 52, paddingHorizontal: 32, gap: 12,
+  },
+  successIcon: {
+    width: 96, height: 96, borderRadius: 48,
+    justifyContent: "center", alignItems: "center", marginBottom: 4,
+  },
+  successTitle: {
+    fontSize: 22, fontFamily: "Inter_700Bold", letterSpacing: -0.5,
+  },
+  successSub: {
+    fontSize: 15, fontFamily: "Inter_400Regular", color: COLORS.textSecondary,
+  },
+  successModeBadge: {
+    flexDirection: "row", alignItems: "center", gap: 7,
+    borderWidth: 1, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 8, marginTop: 4,
+  },
+  successModeText: {
+    fontSize: 13, fontFamily: "Inter_600SemiBold",
+  },
+
   emptyContainer: {
     alignItems: "center", paddingVertical: 56, paddingHorizontal: 32, gap: 12,
   },
@@ -362,19 +424,15 @@ const styles = StyleSheet.create({
     fontSize: 13, fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary, textAlign: "center", lineHeight: 20,
   },
-  scrollView: { maxHeight: 480 },
+  scrollView: { maxHeight: 440 },
 
   itemCard: {
     backgroundColor: COLORS.background, borderRadius: 16,
     borderWidth: 1.5, borderColor: COLORS.border,
     marginBottom: 10, overflow: "hidden",
   },
-  itemCardEditing: {
-    borderColor: COLORS.accent + "60",
-  },
-  itemTop: {
-    flexDirection: "row", padding: 14, gap: 12, alignItems: "flex-start",
-  },
+  itemCardEditing: { borderColor: COLORS.accent + "60" },
+  itemTop: { flexDirection: "row", padding: 14, gap: 12, alignItems: "flex-start" },
   itemInfo: { flex: 1, gap: 3 },
   itemCollection: {
     fontSize: 11, fontFamily: "Inter_500Medium",
@@ -382,8 +440,7 @@ const styles = StyleSheet.create({
   },
   itemNameRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   itemCouleur: {
-    fontSize: 15, fontFamily: "Inter_700Bold",
-    color: COLORS.text, textTransform: "capitalize",
+    fontSize: 15, fontFamily: "Inter_700Bold", color: COLORS.text, textTransform: "capitalize",
   },
   freeBadge: {
     flexDirection: "row", alignItems: "center", gap: 3,
@@ -391,9 +448,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 3,
   },
   freeBadgeText: { fontSize: 10, fontFamily: "Inter_700Bold", color: "#fff" },
-  itemPrixUnit: {
-    fontSize: 12, fontFamily: "Inter_400Regular", color: COLORS.accent,
-  },
+  itemPrixUnit: { fontSize: 12, fontFamily: "Inter_400Regular", color: COLORS.accent },
   itemActions: { alignItems: "flex-end", gap: 8 },
   qtyRow: {
     flexDirection: "row", alignItems: "center", gap: 8,
@@ -412,40 +467,27 @@ const styles = StyleSheet.create({
     fontSize: 16, fontFamily: "Inter_700Bold",
     color: COLORS.text, minWidth: 24, textAlign: "center",
   },
-  itemTotal: {
-    fontSize: 15, fontFamily: "Inter_700Bold",
-    color: COLORS.text, textAlign: "right",
-  },
-  itemBtns: {
-    flexDirection: "row",
-    borderTopWidth: 1, borderTopColor: COLORS.border,
-  },
+  itemTotal: { fontSize: 15, fontFamily: "Inter_700Bold", color: COLORS.text, textAlign: "right" },
+  itemBtns: { flexDirection: "row", borderTopWidth: 1, borderTopColor: COLORS.border },
   editBtn: {
     flex: 1, flexDirection: "row", alignItems: "center",
-    justifyContent: "center", gap: 6,
-    paddingVertical: 11,
+    justifyContent: "center", gap: 6, paddingVertical: 11,
     borderRightWidth: 1, borderRightColor: COLORS.border,
   },
   editBtnActive: { backgroundColor: COLORS.accent + "08" },
-  editBtnText: {
-    fontSize: 12, fontFamily: "Inter_600SemiBold", color: COLORS.textSecondary,
-  },
+  editBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: COLORS.textSecondary },
   deleteBtn: {
     flex: 1, flexDirection: "row", alignItems: "center",
     justifyContent: "center", gap: 6, paddingVertical: 11,
   },
-  deleteBtnText: {
-    fontSize: 12, fontFamily: "Inter_600SemiBold", color: COLORS.danger,
-  },
+  deleteBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: COLORS.danger },
   variantPanel: {
     borderTopWidth: 1, borderTopColor: COLORS.accent + "30",
-    backgroundColor: COLORS.accent + "05",
-    padding: 12, gap: 4,
+    backgroundColor: COLORS.accent + "05", padding: 12, gap: 4,
   },
   variantPanelTitle: {
     fontSize: 10, fontFamily: "Inter_600SemiBold",
-    color: COLORS.accent, textTransform: "uppercase",
-    letterSpacing: 1, marginBottom: 6,
+    color: COLORS.accent, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6,
   },
   variantRow: {
     flexDirection: "row", alignItems: "center",
@@ -458,15 +500,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: "rgba(0,0,0,0.12)",
   },
   variantCouleur: {
-    fontSize: 14, fontFamily: "Inter_600SemiBold",
-    color: COLORS.text, textTransform: "capitalize",
+    fontSize: 14, fontFamily: "Inter_600SemiBold", color: COLORS.text, textTransform: "capitalize",
   },
-  variantStock: {
-    fontSize: 11, fontFamily: "Inter_400Regular", color: COLORS.textSecondary,
-  },
-  variantPrix: {
-    fontSize: 13, fontFamily: "Inter_700Bold", color: COLORS.accent,
-  },
+  variantStock: { fontSize: 11, fontFamily: "Inter_400Regular", color: COLORS.textSecondary },
+  variantPrix: { fontSize: 13, fontFamily: "Inter_700Bold", color: COLORS.accent },
 
   separator: { height: 1, backgroundColor: COLORS.border, marginVertical: 12 },
   totauxBlock: { gap: 6, marginBottom: 4 },
@@ -486,14 +523,18 @@ const styles = StyleSheet.create({
   promoDetailPrice: { fontSize: 11, fontFamily: "Inter_500Medium", color: COLORS.promo + "AA" },
   totalFinalRow: { paddingTop: 8, marginTop: 4, borderTopWidth: 1.5, borderTopColor: COLORS.border },
   totalFinalLabel: { fontSize: 16, fontFamily: "Inter_700Bold", color: COLORS.text },
-  totalFinalValue: {
-    fontSize: 20, fontFamily: "Inter_700Bold", color: COLORS.accent, letterSpacing: -0.5,
-  },
+  totalFinalValue: { fontSize: 20, fontFamily: "Inter_700Bold", color: COLORS.accent, letterSpacing: -0.5 },
+
   footer: {
-    flexDirection: "row", gap: 10,
     paddingHorizontal: 16, paddingTop: 14,
-    borderTopWidth: 1, borderTopColor: COLORS.border,
+    borderTopWidth: 1, borderTopColor: COLORS.border, gap: 10,
   },
+  footerHint: {
+    fontSize: 11, fontFamily: "Inter_600SemiBold",
+    color: COLORS.textSecondary, textTransform: "uppercase",
+    letterSpacing: 1, textAlign: "center",
+  },
+  payRow: { flexDirection: "row", gap: 10 },
   payBtn: {
     flex: 1, flexDirection: "row", alignItems: "center",
     justifyContent: "center", gap: 8, paddingVertical: 15, borderRadius: 14,

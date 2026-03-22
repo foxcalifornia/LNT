@@ -55,7 +55,6 @@ export default function CaisseScreen() {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [showVente, setShowVente] = useState(false);
-  const [ventePaymentMode, setVentePaymentMode] = useState<"cash" | "carte">("cash");
   const [showPassword, setShowPassword] = useState(false);
   const [showVentesJour, setShowVentesJour] = useState(false);
   const [showInventaire, setShowInventaire] = useState(false);
@@ -222,10 +221,7 @@ export default function CaisseScreen() {
           session={currentSession}
           cart={cart}
           onClose={closeCaisse}
-          onShowVente={(mode) => {
-            setVentePaymentMode(mode);
-            setShowVente(true);
-          }}
+          onShowVente={() => setShowVente(true)}
           onShowInventaire={() => setShowInventaire(true)}
           onShowVentesJour={() => setShowVentesJour(true)}
           onShowPanier={() => setShowPanier(true)}
@@ -247,7 +243,6 @@ export default function CaisseScreen() {
         <VenteModal
           visible={showVente}
           collections={collections}
-          defaultPaymentMode={ventePaymentMode}
           cart={cart}
           onCartChange={setCart}
           onVente={handleVente}
@@ -272,10 +267,7 @@ export default function CaisseScreen() {
         collections={collections}
         onCartChange={setCart}
         onClose={() => setShowPanier(false)}
-        onOpenVente={(mode) => {
-          setVentePaymentMode(mode);
-          setShowVente(true);
-        }}
+        onVente={handleVente}
       />
     </View>
   );
@@ -365,7 +357,7 @@ type ActiveCaisseViewProps = {
   session: Session | null;
   cart: CartItem[];
   onClose: () => void;
-  onShowVente: (mode: "cash" | "carte") => void;
+  onShowVente: () => void;
   onShowInventaire: () => void;
   onShowVentesJour: () => void;
   onShowPanier: () => void;
@@ -413,13 +405,9 @@ function ActiveCaisseView({
       </View>
 
       <View style={styles.activeActions}>
-        <Pressable style={styles.venteBtnCash} onPress={() => onShowVente("cash")}>
-          <Feather name="dollar-sign" size={20} color="#fff" />
-          <Text style={styles.venteBtnText}>Vente Cash</Text>
-        </Pressable>
-        <Pressable style={styles.venteBtnCarte} onPress={() => onShowVente("carte")}>
-          <Feather name="credit-card" size={20} color="#fff" />
-          <Text style={styles.venteBtnText}>Vente Carte</Text>
+        <Pressable style={styles.fairVenteBtn} onPress={onShowVente}>
+          <Feather name="plus-circle" size={22} color="#fff" />
+          <Text style={styles.fairVenteBtnText}>Faire une vente</Text>
         </Pressable>
       </View>
 
@@ -723,23 +711,26 @@ const styles = StyleSheet.create({
   activeActions: {
     paddingHorizontal: 20,
     marginBottom: 16,
-    flexDirection: "row",
-    gap: 12,
   },
-  venteBtnCash: {
-    flex: 1,
+  fairVenteBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    backgroundColor: COLORS.cash,
-    borderRadius: 16,
-    paddingVertical: 16,
-    shadowColor: COLORS.cash,
-    shadowOffset: { width: 0, height: 3 },
+    gap: 10,
+    backgroundColor: COLORS.accent,
+    borderRadius: 18,
+    paddingVertical: 18,
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  fairVenteBtnText: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+    letterSpacing: -0.3,
   },
   venteBtnCarte: {
     flex: 1,
