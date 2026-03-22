@@ -24,7 +24,163 @@ import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/li
 
 const COLORS = Colors.light;
 
-type ActiveTab = "collections" | "alertes";
+function ParamsView({
+  collections,
+  isRefetching,
+  onRefresh,
+}: {
+  collections: CollectionWithProduits[];
+  isRefetching: boolean;
+  onRefresh: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, stockMinimum }: { id: number; stockMinimum: number }) =>
+      api.inventory.updateProduit(id, { stockMinimum }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["collections"] });
+      setEditingId(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    },
+    onError: () => Alert.alert("Erreur", "Impossible de mettre à jour le minimum"),
+  });
+
+  const handleSave = (produitId: number) => {
+    const val = parseInt(editValue);
+    if (isNaN(val) || val < 0) { Alert.alert("Erreur", "Valeur invalide"); return; }
+    updateMutation.mutate({ id: produitId, stockMinimum: val });
+  };
+
+  const totalAvecMin = collections.reduce((sum, c) =>
+    sum + c.produits.filter((p) => p.stockMinimum > 0).length, 0
+  );
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
+      keyboardShouldPersistTaps="handled"
+      refreshControl={
+        <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={COLORS.accent} />
+      }
+    >
+      <View style={styles.paramsBanner}>
+        <Feather name="sliders" size={16} color={COLORS.primary} />
+        <Text style={styles.paramsBannerText}>
+          {totalAvecMin} produit{totalAvecMin !== 1 ? "s" : ""} avec minimum défini sur {collections.reduce((s, c) => s + c.produits.length, 0)}
+        </Text>
+      </View>
+
+      {collections.length === 0 && (
+        <View style={styles.emptyState}>
+          <Feather name="package" size={40} color={COLORS.textSecondary} />
+          <Text style={styles.emptyTitle}>Aucun produit</Text>
+        </View>
+      )}
+
+      {collections.map((col) => (
+        <View key={col.id} style={styles.paramsCollectionBlock}>
+          <View style={styles.paramsCollectionHeader}>
+            <Feather name="layers" size={14} color={COLORS.accent} />
+            <Text style={styles.paramsCollectionName}>{col.nom}</Text>
+            <Text style={styles.paramsCollectionCount}>{col.produits.length} produit{col.produits.length !== 1 ? "s" : ""}</Text>
+          </View>
+
+          {col.produits.map((p) => {
+            const isEditing = editingId === p.id;
+            const belowMin = p.stockMinimum > 0 && p.quantite < p.stockMinimum;
+            const manque = belowMin ? p.stockMinimum - p.quantite : 0;
+
+            return (
+              <View key={p.id} style={[styles.paramsRow, belowMin && styles.paramsRowAlert]}>
+                <View style={[styles.produitDot, { backgroundColor: getColorHex(p.couleur), marginTop: 2 }]} />
+
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={styles.paramsRowCouleur}>{p.couleur}</Text>
+                  <View style={styles.paramsRowStocks}>
+                    <View style={styles.paramsStockItem}>
+                      <Text style={styles.paramsStockLabel}>Stock actuel</Text>
+                      <Text style={[
+                        styles.paramsStockValue,
+                        p.quantite === 0 ? { color: COLORS.danger } : belowMin ? { color: "#F59E0B" } : { color: COLORS.success }
+                      ]}>
+                        {p.quantite}
+                      </Text>
+                    </View>
+
+                    <View style={styles.paramsStockDivider} />
+
+                    <View style={styles.paramsStockItem}>
+                      <Text style={styles.paramsStockLabel}>Minimum requis</Text>
+                      {isEditing ? (
+                        <View style={styles.paramsEditRow}>
+                          <TextInput
+                            style={styles.paramsInput}
+                            value={editValue}
+                            onChangeText={setEditValue}
+                            keyboardType="number-pad"
+                            autoFocus
+                            selectTextOnFocus
+                          />
+                          <Pressable
+                            style={styles.paramsSaveBtn}
+                            onPress={() => handleSave(p.id)}
+                            disabled={updateMutation.isPending}
+                          >
+                            {updateMutation.isPending && editingId === p.id
+                              ? <ActivityIndicator size="small" color="#fff" />
+                              : <Feather name="check" size={14} color="#fff" />
+                            }
+                          </Pressable>
+                          <Pressable style={styles.paramsCancelBtn} onPress={() => setEditingId(null)}>
+                            <Feather name="x" size={14} color={COLORS.textSecondary} />
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <Pressable
+                          style={styles.paramsMinDisplay}
+                          onPress={() => { setEditValue(String(p.stockMinimum)); setEditingId(p.id); }}
+                        >
+                          <Text style={[styles.paramsStockValue, { color: COLORS.text }]}>
+                            {p.stockMinimum > 0 ? p.stockMinimum : "—"}
+                          </Text>
+                          <Feather name="edit-2" size={12} color={COLORS.accent} />
+                        </Pressable>
+                      )}
+                    </View>
+
+                    <View style={styles.paramsStockDivider} />
+
+                    <View style={styles.paramsStockItem}>
+                      <Text style={styles.paramsStockLabel}>À ajouter</Text>
+                      <Text style={[
+                        styles.paramsStockValue,
+                        belowMin ? { color: "#F59E0B" } : { color: COLORS.textSecondary }
+                      ]}>
+                        {belowMin ? `+${manque}` : "—"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+
+          {col.produits.length === 0 && (
+            <View style={styles.emptyProduits}>
+              <Text style={styles.emptyProduitsText}>Aucun produit dans cette collection</Text>
+            </View>
+          )}
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+type ActiveTab = "collections" | "parametres" | "alertes";
 
 export default function InventaireScreen() {
   const insets = useSafeAreaInsets();
@@ -106,16 +262,25 @@ export default function InventaireScreen() {
           style={[styles.tabBtn, activeTab === "collections" && styles.tabBtnActive]}
           onPress={() => switchTab("collections")}
         >
-          <Feather name="layers" size={15} color={activeTab === "collections" ? COLORS.accent : COLORS.textSecondary} />
+          <Feather name="layers" size={13} color={activeTab === "collections" ? COLORS.accent : COLORS.textSecondary} />
           <Text style={[styles.tabBtnText, activeTab === "collections" && styles.tabBtnTextActive]}>
-            Collections
+            Stocks
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tabBtn, activeTab === "parametres" && styles.tabBtnActive]}
+          onPress={() => switchTab("parametres")}
+        >
+          <Feather name="sliders" size={13} color={activeTab === "parametres" ? COLORS.primary : COLORS.textSecondary} />
+          <Text style={[styles.tabBtnText, activeTab === "parametres" && { color: COLORS.primary, fontFamily: "Inter_700Bold" }]}>
+            Paramètres
           </Text>
         </Pressable>
         <Pressable
           style={[styles.tabBtn, activeTab === "alertes" && styles.tabBtnActive]}
           onPress={() => switchTab("alertes")}
         >
-          <Feather name="alert-triangle" size={15} color={activeTab === "alertes" ? "#F59E0B" : COLORS.textSecondary} />
+          <Feather name="alert-triangle" size={13} color={activeTab === "alertes" ? "#F59E0B" : COLORS.textSecondary} />
           <Text style={[styles.tabBtnText, activeTab === "alertes" && { color: "#F59E0B", fontFamily: "Inter_700Bold" }]}>
             Alertes
           </Text>
@@ -131,6 +296,12 @@ export default function InventaireScreen() {
         <View style={styles.loadingContainer}>
           <ActivityIndicator color={COLORS.accent} size="large" />
         </View>
+      ) : activeTab === "parametres" ? (
+        <ParamsView
+          collections={collections}
+          isRefetching={isRefetching}
+          onRefresh={refetch}
+        />
       ) : activeTab === "alertes" ? (
         <AlertesView
           collections={collections}
@@ -978,6 +1149,77 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   alertBadgeText: { fontSize: 11, fontFamily: "Inter_700Bold", color: "#fff" },
+  paramsBanner: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "#EEF2FF", borderRadius: 12,
+    padding: 12, marginBottom: 16, marginTop: 8,
+  },
+  paramsBannerText: {
+    fontSize: 13, fontFamily: "Inter_500Medium", color: COLORS.primary,
+  },
+  paramsCollectionBlock: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16, marginBottom: 12,
+    borderWidth: 1, borderColor: COLORS.border,
+    overflow: "hidden",
+  },
+  paramsCollectionHeader: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 16, paddingVertical: 12,
+    backgroundColor: COLORS.background,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  paramsCollectionName: {
+    flex: 1, fontSize: 14, fontFamily: "Inter_700Bold", color: COLORS.text,
+  },
+  paramsCollectionCount: {
+    fontSize: 12, fontFamily: "Inter_400Regular", color: COLORS.textSecondary,
+  },
+  paramsRow: {
+    flexDirection: "row", alignItems: "flex-start", gap: 12,
+    padding: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  paramsRowAlert: {
+    backgroundColor: "#FFFBEB",
+  },
+  paramsRowCouleur: {
+    fontSize: 14, fontFamily: "Inter_600SemiBold",
+    color: COLORS.text, textTransform: "capitalize",
+  },
+  paramsRowStocks: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: COLORS.background, borderRadius: 10, padding: 10,
+  },
+  paramsStockItem: { flex: 1, alignItems: "center", gap: 3 },
+  paramsStockDivider: { width: 1, height: 28, backgroundColor: COLORS.border },
+  paramsStockLabel: {
+    fontSize: 9, fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary, textTransform: "uppercase", letterSpacing: 0.5,
+  },
+  paramsStockValue: {
+    fontSize: 18, fontFamily: "Inter_700Bold", color: COLORS.text,
+  },
+  paramsEditRow: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+  },
+  paramsInput: {
+    width: 48, height: 32, borderRadius: 8,
+    borderWidth: 1.5, borderColor: COLORS.accent,
+    backgroundColor: COLORS.card, textAlign: "center",
+    fontSize: 15, fontFamily: "Inter_700Bold", color: COLORS.text,
+    paddingHorizontal: 4,
+  },
+  paramsSaveBtn: {
+    width: 28, height: 28, borderRadius: 8,
+    backgroundColor: COLORS.accent, justifyContent: "center", alignItems: "center",
+  },
+  paramsCancelBtn: {
+    width: 28, height: 28, borderRadius: 8,
+    backgroundColor: COLORS.border, justifyContent: "center", alignItems: "center",
+  },
+  paramsMinDisplay: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+  },
   alertSectionHeader: {
     flexDirection: "row", alignItems: "center", gap: 8,
     marginBottom: 10, marginTop: 16,
