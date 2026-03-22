@@ -24,15 +24,16 @@ type CartItem = {
 type Props = {
   visible: boolean;
   collections: CollectionWithProduits[];
+  defaultPaymentMode?: "cash" | "carte";
   onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
   onClose: () => void;
 };
 
-export function VenteModal({ visible, collections, onVente, onClose }: Props) {
+export function VenteModal({ visible, collections, defaultPaymentMode, onVente, onClose }: Props) {
   const [view, setView] = useState<"collections" | "produits">("collections");
   const [selectedCollection, setSelectedCollection] = useState<CollectionWithProduits | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [paymentMode, setPaymentMode] = useState<"cash" | "carte" | null>(null);
+  const [paymentMode, setPaymentMode] = useState<"cash" | "carte" | null>(defaultPaymentMode ?? null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -67,7 +68,7 @@ export function VenteModal({ visible, collections, onVente, onClose }: Props) {
         setCart([]);
         setView("collections");
         setSelectedCollection(null);
-        setPaymentMode(null);
+        setPaymentMode(defaultPaymentMode ?? null);
         onClose();
       }, 1500);
     } catch {
@@ -79,7 +80,7 @@ export function VenteModal({ visible, collections, onVente, onClose }: Props) {
     setCart([]);
     setView("collections");
     setSelectedCollection(null);
-    setPaymentMode(null);
+    setPaymentMode(defaultPaymentMode ?? null);
     setSuccess(false);
     onClose();
   };

@@ -51,6 +51,7 @@ export default function CaisseScreen() {
   const [caisseState, setCaisseState] = useState<CaisseState>("checking");
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [showVente, setShowVente] = useState(false);
+  const [ventePaymentMode, setVentePaymentMode] = useState<"cash" | "carte">("cash");
   const [showPassword, setShowPassword] = useState(false);
   const [openingLoading, setOpeningLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -97,6 +98,38 @@ export default function CaisseScreen() {
     };
   }, [checkTodaySession]);
 
+  const getLocalisation = async (): Promise<string | null> => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return null;
+
+      const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000));
+      const locationFetch = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: 0,
+        distanceInterval: 0,
+      }).then(async (loc) => {
+        try {
+          const geocode = await Location.reverseGeocodeAsync({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+          if (geocode.length > 0) {
+            const place = geocode[0];
+            return [place.street, place.city].filter(Boolean).join(", ") || null;
+          }
+          return `${loc.coords.latitude.toFixed(4)}, ${loc.coords.longitude.toFixed(4)}`;
+        } catch {
+          return `${loc.coords.latitude.toFixed(4)}, ${loc.coords.longitude.toFixed(4)}`;
+        }
+      });
+
+      return await Promise.race([locationFetch, timeout]);
+    } catch {
+      return null;
+    }
+  };
+
   const openCaisse = async () => {
     setOpeningLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -106,25 +139,7 @@ export default function CaisseScreen() {
       const date = now.toLocaleDateString("fr-FR");
       const heure = now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
-      let localisation: string | null = null;
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === "granted") {
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          const geocode = await Location.reverseGeocodeAsync({
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-          });
-          if (geocode.length > 0) {
-            const place = geocode[0];
-            localisation = [place.street, place.city, place.country].filter(Boolean).join(", ");
-          } else {
-            localisation = `${loc.coords.latitude.toFixed(4)}, ${loc.coords.longitude.toFixed(4)}`;
-          }
-        }
-      } catch {
-        localisation = null;
-      }
+      const localisation = await getLocalisation();
 
       const session = await api.caisse.createSession({ date, heure, localisation });
       setCurrentSession(session);
@@ -198,7 +213,10 @@ export default function CaisseScreen() {
           session={currentSession}
           collections={collections}
           onClose={closeCaisse}
-          onShowVente={() => setShowVente(true)}
+          onShowVente={(mode) => {
+            setVentePaymentMode(mode);
+            setShowVente(true);
+          }}
         />
       )}
 
@@ -216,6 +234,7 @@ export default function CaisseScreen() {
         <VenteModal
           visible={showVente}
           collections={collections}
+          defaultPaymentMode={ventePaymentMode}
           onVente={handleVente}
           onClose={() => setShowVente(false)}
         />
@@ -309,7 +328,7 @@ type ActiveCaisseViewProps = {
   session: Session | null;
   collections: CollectionWithProduits[];
   onClose: () => void;
-  onShowVente: () => void;
+  onShowVente: (mode: "cash" | "carte") => void;
 };
 
 function ActiveCaisseView({ session, collections, onClose, onShowVente }: ActiveCaisseViewProps) {
@@ -334,9 +353,13 @@ function ActiveCaisseView({ session, collections, onClose, onShowVente }: Active
       </View>
 
       <View style={styles.activeActions}>
-        <Pressable style={styles.venteBtn} onPress={onShowVente}>
-          <Feather name="plus" size={22} color="#fff" />
-          <Text style={styles.venteBtnText}>Enregistrer une Vente</Text>
+        <Pressable style={styles.venteBtnCash} onPress={() => onShowVente("cash")}>
+          <Feather name="dollar-sign" size={20} color="#fff" />
+          <Text style={styles.venteBtnText}>Vente Cash</Text>
+        </Pressable>
+        <Pressable style={styles.venteBtnCarte} onPress={() => onShowVente("carte")}>
+          <Feather name="credit-card" size={20} color="#fff" />
+          <Text style={styles.venteBtnText}>Vente Carte</Text>
         </Pressable>
       </View>
 
@@ -644,23 +667,41 @@ const styles = StyleSheet.create({
   activeActions: {
     paddingHorizontal: 20,
     marginBottom: 20,
+    flexDirection: "row",
+    gap: 12,
   },
-  venteBtn: {
+  venteBtnCash: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
-    backgroundColor: COLORS.primary,
+    gap: 8,
+    backgroundColor: COLORS.cash,
     borderRadius: 16,
     paddingVertical: 16,
-    shadowColor: COLORS.primary,
+    shadowColor: COLORS.cash,
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  venteBtnCarte: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: COLORS.card_payment,
+    borderRadius: 16,
+    paddingVertical: 16,
+    shadowColor: COLORS.card_payment,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
   },
   venteBtnText: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: "Inter_700Bold",
     color: "#fff",
     letterSpacing: -0.2,

@@ -25,6 +25,10 @@ export default function HomeScreen() {
 
   const handlePress = (section: Section) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (section === "caisse") {
+      router.push("/caisse");
+      return;
+    }
     setPendingSection(section);
     setShowPassword(true);
   };
