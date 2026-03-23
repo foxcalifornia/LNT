@@ -19,7 +19,6 @@ import Colors from "@/constants/colors";
 import { api, formatPrix, type Session } from "@/lib/api";
 import { cartTotalItems, type CartItem } from "@/lib/cart";
 import { VenteModal } from "@/components/VenteModal";
-import { PasswordModal } from "@/components/PasswordModal";
 import { PanierModal } from "@/components/PanierModal";
 import { useAuth } from "@/context/AuthContext";
 
@@ -56,7 +55,6 @@ export default function CaisseScreen() {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [showVente, setShowVente] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [showPanier, setShowPanier] = useState(false);
   const [openingLoading, setOpeningLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -257,14 +255,14 @@ export default function CaisseScreen() {
       ) : caisseState === "admin_view" ? (
         <AdminConsultView
           session={currentSession}
-          onOpen={() => setShowPassword(true)}
+          onOpen={openCaisse}
           onShowInventaire={() => router.push("/caisse/inventaire")}
           onShowVentesJour={() => router.push("/caisse/ventes-jour")}
         />
       ) : caisseState === "need_open" ? (
         <NeedOpenView
           loading={openingLoading}
-          onOpen={() => setShowPassword(true)}
+          onOpen={openCaisse}
         />
       ) : (
         <ActiveCaisseView
@@ -279,16 +277,6 @@ export default function CaisseScreen() {
           insets={insets}
         />
       )}
-
-      <PasswordModal
-        visible={showPassword}
-        title="Ouverture de Caisse"
-        onSuccess={() => {
-          setShowPassword(false);
-          openCaisse();
-        }}
-        onCancel={() => setShowPassword(false)}
-      />
 
       {showVente && (
         <VenteModal
@@ -367,9 +355,6 @@ function NeedOpenView({
             </>
           )}
         </Pressable>
-        <Text style={styles.openBtnHint}>
-          Un mot de passe vous sera demandé pour confirmer l'ouverture
-        </Text>
       </View>
     </View>
   );
