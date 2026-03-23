@@ -139,7 +139,7 @@ function MenuCard({ icon, title, subtitle, color, bgColor, onPress }: MenuCardPr
       onPress={onPress}
     >
       <View style={[styles.cardIconContainer, { backgroundColor: bgColor }]}>
-        <Feather name={icon as any} size={36} color={color} />
+        <Feather name={icon as any} size={28} color={color} />
       </View>
       <View style={styles.cardContent}>
         <Text style={styles.cardTitle}>{title}</Text>
@@ -221,28 +221,28 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: COLORS.card,
     borderRadius: 20,
-    padding: 24,
+    padding: 22,
     flexDirection: "row",
     alignItems: "center",
-    gap: 20,
-    shadowColor: COLORS.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 16,
-    elevation: 4,
+    gap: 18,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    elevation: 3,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   cardIconContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: 18,
+    width: 64,
+    height: 64,
+    borderRadius: 16,
     justifyContent: "center",
     alignItems: "center",
   },
   cardContent: {
     flex: 1,
-    gap: 4,
+    gap: 3,
   },
   cardTitle: {
     fontSize: 18,
@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   cardSubtitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: COLORS.textSecondary,
   },
