@@ -6,7 +6,7 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Redirect, Stack, useSegments } from "expo-router";
+import { router, Stack, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -28,17 +28,17 @@ const queryClient = new QueryClient({
 });
 
 function RootLayoutNav() {
-  const { isAuthenticated, isAdmin } = useAuth();
+  const { isAuthenticated } = useAuth();
   const segments = useSegments();
 
-  const inLoginScreen = segments[0] === "login";
-
-  if (!isAuthenticated && !inLoginScreen) {
-    return <Redirect href="/login" />;
-  }
-  if (isAuthenticated && inLoginScreen) {
-    return <Redirect href="/(tabs)" />;
-  }
+  useEffect(() => {
+    const inLoginScreen = segments[0] === "login";
+    if (!isAuthenticated && !inLoginScreen) {
+      router.replace("/login");
+    } else if (isAuthenticated && inLoginScreen) {
+      router.replace("/(tabs)");
+    }
+  }, [isAuthenticated, segments]);
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
