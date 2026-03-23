@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -196,6 +196,26 @@ function AllProduitsView({
   getCartQty: (id: number) => number;
   updateCart: (p: Produit & { collectionNom: string }, delta: number) => void;
 }) {
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+
+  const isSearching = search.trim().length > 0;
+
+  useEffect(() => {
+    if (isSearching) {
+      setExpandedIds(new Set(collections.map((c) => c.id)));
+    }
+  }, [isSearching, collections]);
+
+  const toggleCollection = (id: number) => {
+    Haptics.selectionAsync();
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const freeCountByProduct = new Map<number, number>();
   for (const fd of promo.freeDetails) {
     freeCountByProduct.set(fd.produitId, fd.count);
@@ -225,14 +245,18 @@ function AllProduitsView({
         {collections.map((col) => {
           if (col.produits.length === 0) return null;
           const available = col.produits.filter((p) => p.quantite > 0).length;
+          const isExpanded = isSearching || expandedIds.has(col.id);
           const inCartCount = cart
             .filter((i) => i.produit.collectionNom === col.nom)
             .reduce((s, i) => s + i.quantite, 0);
 
           return (
             <View key={col.id} style={styles.collectionSection}>
-              <View style={styles.collectionHeader}>
-                <View style={[styles.collectionIconBg, { backgroundColor: color + "15" }]}>
+              <Pressable
+                style={[styles.collectionHeader, isExpanded && styles.collectionHeaderExpanded]}
+                onPress={() => toggleCollection(col.id)}
+              >
+                <View style={[styles.collectionIconBg, { backgroundColor: color + "18" }]}>
                   <Feather name="layers" size={14} color={color} />
                 </View>
                 <Text style={styles.collectionName}>{col.nom}</Text>
@@ -245,10 +269,15 @@ function AllProduitsView({
                   <Text style={styles.collectionSub}>
                     {available}/{col.produits.length}
                   </Text>
+                  <Feather
+                    name={isExpanded ? "chevron-up" : "chevron-down"}
+                    size={16}
+                    color={COLORS.textSecondary}
+                  />
                 </View>
-              </View>
+              </Pressable>
 
-              {col.produits.map((p) => {
+              {isExpanded && col.produits.map((p) => {
                 const produitWithCol = { ...p, collectionNom: col.nom };
                 const cartQty = getCartQty(p.id);
                 const freeQty = freeCountByProduct.get(p.id) ?? 0;
@@ -267,7 +296,7 @@ function AllProduitsView({
                     <View style={styles.productInfo}>
                       <View style={styles.productNameRow}>
                         <Text style={[styles.productName, isEmpty && { color: COLORS.textSecondary }]}>
-                          {p.couleur}
+                          {col.nom} {p.couleur}
                         </Text>
                         {freeQty > 0 && (
                           <View style={styles.freeBadge}>
@@ -545,8 +574,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    marginBottom: 4,
+  },
+  collectionHeaderExpanded: {
+    borderColor: COLORS.accent + "40",
+    backgroundColor: COLORS.accent + "08",
     marginBottom: 8,
-    paddingHorizontal: 2,
   },
   collectionIconBg: {
     width: 28,
