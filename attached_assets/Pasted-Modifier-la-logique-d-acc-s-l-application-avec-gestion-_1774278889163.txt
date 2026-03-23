@@ -1,0 +1,99 @@
+Modifier la logique d’accès à l’application avec gestion des profils utilisateur.
+
+Objectif :
+Mettre en place un système simple de profils “Admin” et “Vendeur”, avec des droits d’accès différents selon le rôle.
+
+1. Retirer les mots de passe actuels
+- Supprimer la demande de mot de passe pour accéder à :
+  - l’Inventaire
+  - le Reporting
+
+Ces accès seront désormais gérés par le profil utilisateur connecté.
+
+2. Ajouter un écran de connexion au lancement de l’application
+Quand l’application s’ouvre, afficher un écran de connexion demandant :
+
+- le choix du profil :
+  - Admin
+  - Vendeur
+- le mot de passe correspondant à ce profil
+
+L’utilisateur ne peut entrer dans l’application qu’après avoir sélectionné un profil et saisi le bon mot de passe.
+
+3. Logique du profil Vendeur
+Si l’utilisateur se connecte en tant que **Vendeur** :
+- il accède uniquement à la section **Caisse**
+- il ne doit pas voir :
+  - Inventaire
+  - Reporting
+  - Paramètres administrateur éventuels
+
+Pour le vendeur, la logique actuelle de caisse reste la même :
+- pendant les horaires d’ouverture, il doit ouvrir la caisse avec le processus prévu
+- la caisse fonctionne entre 10h00 et 20h00
+- si la caisse n’est pas ouverte, il doit suivre le flux normal d’ouverture
+- en dehors des horaires d’ouverture, le vendeur ne doit pas pouvoir utiliser la caisse
+
+4. Logique du profil Admin
+Si l’utilisateur se connecte en tant que **Admin** :
+- il a accès à toutes les sections :
+  - Caisse
+  - Inventaire
+  - Reporting
+  - Paramètres si disponibles
+
+Règle spéciale Admin pour la caisse :
+- l’admin peut accéder à la section **Caisse** même en dehors des horaires d’ouverture
+- l’admin peut consulter la caisse sans que la caisse soit officiellement ouverte
+- cela permet à l’admin de voir l’interface, les ventes, les informations de caisse, etc.
+- cette consultation admin ne doit pas déclencher automatiquement une ouverture de caisse
+
+Important :
+- pour l’admin, consulter la caisse hors horaires ne doit pas être considéré comme une ouverture de caisse
+- ne pas enregistrer une ouverture si l’admin consulte seulement la caisse
+- l’ouverture officielle de la caisse reste une action distincte
+
+5. Gestion de l’affichage selon le rôle
+Adapter l’interface après connexion :
+
+Pour un vendeur :
+- afficher uniquement les éléments liés à la caisse
+- masquer les boutons / onglets Inventaire et Reporting
+
+Pour un admin :
+- afficher toutes les sections
+- autoriser la navigation complète
+
+6. Sécurité et logique d’accès
+- protéger les routes / pages / écrans selon le rôle
+- ne pas se contenter de masquer les boutons dans l’interface
+- vérifier côté logique applicative que :
+  - un vendeur ne peut pas accéder à Inventaire ou Reporting
+  - un admin peut tout voir
+
+7. Expérience utilisateur
+Après connexion :
+- afficher clairement le profil connecté
+  - exemple : “Connecté en tant qu’Admin”
+  - ou “Connecté en tant que Vendeur”
+
+Ajouter un bouton :
+- “Se déconnecter”
+
+8. Objectif final
+Je veux ce fonctionnement :
+
+Au lancement de l’application :
+- choisir un profil
+- saisir le mot de passe
+- entrer dans l’application selon les droits du profil
+
+Vendeur :
+- accès uniquement à la caisse
+- logique de caisse inchangée
+- ouverture obligatoire pendant les horaires
+
+Admin :
+- accès à tout
+- peut consulter la caisse même hors horaires
+- peut voir la caisse sans l’ouvrir officiellement

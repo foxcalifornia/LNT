@@ -38,9 +38,18 @@ artifacts-monorepo/
 
 ## App Features (LNT Paris - Gestion de Stock)
 
-### Écran Principal
-- 2 options : Ouvrir la Caisse et Inventaire
-- Mot de passe (1234) requis pour les 2 sections
+### Système d'Authentification
+- Écran de connexion au lancement avec choix de profil : **Admin** (mot de passe `1234`) ou **Vendeur** (mot de passe `5678`)
+- Contexte global `AuthContext` (no persistence — login requis à chaque lancement)
+- Badge de rôle affiché dans le menu principal + bouton "Se déconnecter"
+- **Admin** : accès complet (Caisse, Inventaire, Rapports), bypass de la restriction horaire en mode consultation
+- **Vendeur** : accès uniquement à la Caisse, routes Inventaire/Reporting protégées
+- Protection côté composant : `useEffect` → `router.back()` si rôle insuffisant
+
+### Caisse — Modes selon rôle
+- **Vendeur** : logique inchangée (blocage hors 10h-20h, ouverture obligatoire)
+- **Admin hors horaires** : état `admin_view` (consultation uniquement — ventes du jour, stock, pas de vente)
+- **Admin en horaires** : peut ouvrir la caisse normalement
 
 ### Caisse
 - Choix du mode de paiement : Cash ou Carte Bancaire (SumUp Terminal)

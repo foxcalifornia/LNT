@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -15,6 +15,7 @@ import * as Haptics from "expo-haptics";
 
 import Colors from "@/constants/colors";
 import { api, formatPrix, formatDateLabel, type JourReport, type Session, type CollectionWithProduits } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 const COLORS = Colors.light;
 const CASH_COLOR = "#10B981";
@@ -42,9 +43,16 @@ function parsePunctuality(heure: string): { tardMinutes: number; onTime: boolean
 
 export default function ReportingScreen() {
   const insets = useSafeAreaInsets();
+  const { isAdmin } = useAuth();
   const [tab, setTab] = useState<Tab>("resume");
   const [filter, setFilter] = useState<Filter>("all");
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      router.back();
+    }
+  }, [isAdmin]);
 
   const { data: days = [], isLoading: daysLoading, refetch } = useQuery({
     queryKey: ["reporting-daily"],

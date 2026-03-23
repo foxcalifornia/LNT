@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +21,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import Colors from "@/constants/colors";
 import { api, formatPrix, type CollectionWithProduits, type Produit, type Consommable } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 const COLORS = Colors.light;
 
@@ -29,6 +30,14 @@ type ActiveTab = "collections" | "alertes";
 export default function InventaireScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
+
+  useEffect(() => {
+    if (!isAdmin) {
+      router.back();
+    }
+  }, [isAdmin]);
+
   const [showAddCollection, setShowAddCollection] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("collections");

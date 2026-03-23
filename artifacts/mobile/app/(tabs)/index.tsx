@@ -1,8 +1,9 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React from "react";
 import {
+  Alert,
   Pressable,
   StyleSheet,
   Text,
@@ -11,44 +12,49 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { PasswordModal } from "@/components/PasswordModal";
 import Colors from "@/constants/colors";
+import { useAuth } from "@/context/AuthContext";
 
 const COLORS = Colors.light;
 
-type Section = "caisse" | "inventaire" | "reporting" | null;
-
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const [pendingSection, setPendingSection] = useState<Section>(null);
-  const [showPassword, setShowPassword] = useState(false);
+  const { role, logout, isAdmin } = useAuth();
 
-  const handlePress = (section: Section) => {
+  const handleLogout = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      "Se déconnecter",
+      "Voulez-vous vraiment vous déconnecter ?",
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Déconnecter",
+          style: "destructive",
+          onPress: () => {
+            logout();
+            router.replace("/login");
+          },
+        },
+      ]
+    );
+  };
+
+  const handlePress = (section: "caisse" | "inventaire" | "reporting") => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (section === "caisse") {
       router.push("/caisse");
-      return;
-    }
-    setPendingSection(section);
-    setShowPassword(true);
-  };
-
-  const handlePasswordSuccess = () => {
-    setShowPassword(false);
-    if (pendingSection === "caisse") {
-      router.push("/caisse");
-    } else if (pendingSection === "inventaire") {
+    } else if (section === "inventaire") {
       router.push("/inventaire");
-    } else if (pendingSection === "reporting") {
+    } else if (section === "reporting") {
       router.push("/reporting");
     }
-    setPendingSection(null);
   };
 
-  const handlePasswordCancel = () => {
-    setShowPassword(false);
-    setPendingSection(null);
-  };
+  const roleLabel = isAdmin ? "Admin" : "Vendeur";
+  const roleColor = isAdmin ? COLORS.accent : COLORS.cash;
+  const roleBg = isAdmin ? "#FDF8F0" : "#ECFDF5";
+  const roleIcon = isAdmin ? "settings" : "shopping-bag";
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -61,6 +67,13 @@ export default function HomeScreen() {
           <Text style={styles.logoSubText}>PARIS</Text>
         </View>
         <Text style={styles.tagline}>Gestion de Stock</Text>
+
+        <View style={[styles.roleBadge, { backgroundColor: roleBg, borderColor: roleColor + "40" }]}>
+          <Feather name={roleIcon as any} size={13} color={roleColor} />
+          <Text style={[styles.roleBadgeText, { color: roleColor }]}>
+            Connecté en tant qu'<Text style={styles.roleBadgeBold}>{roleLabel}</Text>
+          </Text>
+        </View>
       </View>
 
       <View style={styles.content}>
@@ -73,41 +86,36 @@ export default function HomeScreen() {
           onPress={() => handlePress("caisse")}
         />
 
-        <MenuCard
-          icon="package"
-          title="Inventaire"
-          subtitle="Gérer les collections"
-          color={COLORS.accent}
-          bgColor="#FDF8F0"
-          onPress={() => handlePress("inventaire")}
-        />
+        {isAdmin && (
+          <>
+            <MenuCard
+              icon="package"
+              title="Inventaire"
+              subtitle="Gérer les collections"
+              color={COLORS.accent}
+              bgColor="#FDF8F0"
+              onPress={() => handlePress("inventaire")}
+            />
 
-        <MenuCard
-          icon="bar-chart-2"
-          title="Rapports"
-          subtitle="Ventes & chiffre d'affaires"
-          color="#8B5CF6"
-          bgColor="#F5F3FF"
-          onPress={() => handlePress("reporting")}
-        />
+            <MenuCard
+              icon="bar-chart-2"
+              title="Rapports"
+              subtitle="Ventes & chiffre d'affaires"
+              color="#8B5CF6"
+              bgColor="#F5F3FF"
+              onPress={() => handlePress("reporting")}
+            />
+          </>
+        )}
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>© 2024 LNT Paris · Tous droits réservés</Text>
+        <Pressable style={styles.logoutBtn} onPress={handleLogout}>
+          <Feather name="log-out" size={15} color={COLORS.danger} />
+          <Text style={styles.logoutText}>Se déconnecter</Text>
+        </Pressable>
+        <Text style={styles.footerText}>© 2025 LNT Paris · Tous droits réservés</Text>
       </View>
-
-      <PasswordModal
-        visible={showPassword}
-        title={
-          pendingSection === "caisse"
-            ? "Ouvrir la Caisse"
-            : pendingSection === "reporting"
-            ? "Accès Rapports"
-            : "Accès Inventaire"
-        }
-        onSuccess={handlePasswordSuccess}
-        onCancel={handlePasswordCancel}
-      />
     </View>
   );
 }
@@ -150,9 +158,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   header: {
-    paddingTop: 48,
+    paddingTop: 40,
     paddingHorizontal: 28,
-    paddingBottom: 40,
+    paddingBottom: 32,
     alignItems: "center",
     gap: 8,
   },
@@ -186,6 +194,23 @@ const styles = StyleSheet.create({
     letterSpacing: 3,
     textTransform: "uppercase",
     marginTop: 4,
+  },
+  roleBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    marginTop: 8,
+  },
+  roleBadgeText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+  },
+  roleBadgeBold: {
+    fontFamily: "Inter_700Bold",
   },
   content: {
     flex: 1,
@@ -238,8 +263,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   footer: {
-    paddingBottom: 20,
+    paddingBottom: 16,
     alignItems: "center",
+    gap: 12,
+  },
+  logoutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.danger + "40",
+    backgroundColor: "#FEF2F2",
+  },
+  logoutText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.danger,
   },
   footerText: {
     fontSize: 11,

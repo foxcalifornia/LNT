@@ -21,10 +21,11 @@ import { cartTotalItems, type CartItem } from "@/lib/cart";
 import { VenteModal } from "@/components/VenteModal";
 import { PasswordModal } from "@/components/PasswordModal";
 import { PanierModal } from "@/components/PanierModal";
+import { useAuth } from "@/context/AuthContext";
 
 const COLORS = Colors.light;
 
-type CaisseState = "checking" | "closed_hours" | "need_open" | "active";
+type CaisseState = "checking" | "closed_hours" | "need_open" | "active" | "admin_view";
 
 function getTodayFr() {
   return new Date().toLocaleDateString("fr-FR");
@@ -50,6 +51,7 @@ function getTodayLabel() {
 export default function CaisseScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
   const [caisseState, setCaisseState] = useState<CaisseState>("checking");
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -71,14 +73,26 @@ export default function CaisseScreen() {
       const todaySession = sessions.find((s) => s.date === today);
       if (todaySession) {
         setCurrentSession(todaySession);
-        setCaisseState(isCaisseHours() ? "active" : "closed_hours");
+        if (isCaisseHours()) {
+          setCaisseState("active");
+        } else {
+          setCaisseState(isAdmin ? "admin_view" : "closed_hours");
+        }
       } else {
-        setCaisseState(isCaisseHours() ? "need_open" : "closed_hours");
+        if (isCaisseHours()) {
+          setCaisseState("need_open");
+        } else {
+          setCaisseState(isAdmin ? "admin_view" : "closed_hours");
+        }
       }
     } catch {
-      setCaisseState(isCaisseHours() ? "need_open" : "closed_hours");
+      if (isCaisseHours()) {
+        setCaisseState("need_open");
+      } else {
+        setCaisseState(isAdmin ? "admin_view" : "closed_hours");
+      }
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     checkTodaySession();
@@ -88,9 +102,9 @@ export default function CaisseScreen() {
         setCaisseState((prev) => {
           if (prev === "active") {
             setCurrentSession(null);
-            return "closed_hours";
+            return isAdmin ? "admin_view" : "closed_hours";
           }
-          if (prev === "need_open") return "closed_hours";
+          if (prev === "need_open") return isAdmin ? "admin_view" : "closed_hours";
           return prev;
         });
       }
@@ -99,7 +113,7 @@ export default function CaisseScreen() {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [checkTodaySession]);
+  }, [checkTodaySession, isAdmin]);
 
   const getLocalisation = async (): Promise<string | null> => {
     try {
@@ -212,7 +226,11 @@ export default function CaisseScreen() {
           onPress: () => {
             setCurrentSession(null);
             setCart([]);
-            setCaisseState(isCaisseHours() ? "need_open" : "closed_hours");
+            if (isCaisseHours()) {
+              setCaisseState("need_open");
+            } else {
+              setCaisseState(isAdmin ? "admin_view" : "closed_hours");
+            }
           },
         },
       ]
@@ -236,6 +254,13 @@ export default function CaisseScreen() {
         </View>
       ) : caisseState === "closed_hours" ? (
         <ClosedView hasSession={!!currentSession} session={currentSession} />
+      ) : caisseState === "admin_view" ? (
+        <AdminConsultView
+          session={currentSession}
+          onOpen={() => setShowPassword(true)}
+          onShowInventaire={() => router.push("/caisse/inventaire")}
+          onShowVentesJour={() => router.push("/caisse/ventes-jour")}
+        />
       ) : caisseState === "need_open" ? (
         <NeedOpenView
           loading={openingLoading}
@@ -375,6 +400,104 @@ function ClosedView({
         </View>
       )}
     </View>
+  );
+}
+
+function AdminConsultView({
+  session,
+  onOpen,
+  onShowInventaire,
+  onShowVentesJour,
+}: {
+  session: Session | null;
+  onOpen: () => void;
+  onShowInventaire: () => void;
+  onShowVentesJour: () => void;
+}) {
+  const { data: ventesJour } = useQuery({
+    queryKey: ["ventesJour"],
+    queryFn: api.caisse.getVentesJour,
+  });
+
+  const nbVentes = ventesJour?.transactions?.length ?? 0;
+  const totalCA = ventesJour?.transactions?.reduce(
+    (s, t) => s + t.articles.reduce((ss, a) => ss + a.montantCentimes, 0),
+    0
+  ) ?? 0;
+
+  const dateLabel = getTodayLabel();
+
+  return (
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={styles.adminConsultContent}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.adminBanner}>
+        <View style={styles.adminBannerIcon}>
+          <Feather name="eye" size={18} color={COLORS.accent} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.adminBannerTitle}>Mode Consultation Admin</Text>
+          <Text style={styles.adminBannerSub}>Hors horaires d'ouverture · Caisse non active</Text>
+        </View>
+      </View>
+
+      <View style={styles.adminDateCard}>
+        <Text style={styles.adminDateLabel}>{dateLabel}</Text>
+        <View style={styles.adminHoursRow}>
+          <Feather name="clock" size={13} color={COLORS.textSecondary} />
+          <Text style={styles.adminHoursText}>Horaires : 10h00 – 20h00</Text>
+        </View>
+      </View>
+
+      {session ? (
+        <View style={styles.adminSessionCard}>
+          <View style={styles.adminSessionRow}>
+            <Feather name="check-circle" size={16} color={COLORS.cash} />
+            <Text style={styles.adminSessionText}>Session ouverte à {session.heure}</Text>
+          </View>
+          <View style={styles.adminStatsRow}>
+            <View style={styles.adminStat}>
+              <Text style={styles.adminStatValue}>{nbVentes}</Text>
+              <Text style={styles.adminStatLabel}>Ventes</Text>
+            </View>
+            <View style={styles.adminStatDivider} />
+            <View style={styles.adminStat}>
+              <Text style={[styles.adminStatValue, { color: COLORS.cash }]}>
+                {formatPrix(totalCA)}
+              </Text>
+              <Text style={styles.adminStatLabel}>Chiffre du jour</Text>
+            </View>
+          </View>
+        </View>
+      ) : (
+        <View style={[styles.adminSessionCard, { alignItems: "center", paddingVertical: 20 }]}>
+          <Feather name="info" size={20} color={COLORS.textSecondary} />
+          <Text style={styles.adminNoSessionText}>Aucune session ouverte aujourd'hui</Text>
+        </View>
+      )}
+
+      <View style={styles.adminActions}>
+        <Pressable style={styles.adminActionBtn} onPress={onShowVentesJour}>
+          <Feather name="list" size={18} color={COLORS.accent} />
+          <Text style={styles.adminActionText}>Voir les ventes du jour</Text>
+          <Feather name="chevron-right" size={16} color={COLORS.textSecondary} />
+        </Pressable>
+        <Pressable style={styles.adminActionBtn} onPress={onShowInventaire}>
+          <Feather name="package" size={18} color={COLORS.accent} />
+          <Text style={styles.adminActionText}>Consulter le stock</Text>
+          <Feather name="chevron-right" size={16} color={COLORS.textSecondary} />
+        </Pressable>
+      </View>
+
+      {isCaisseHours() && (
+        <Pressable style={styles.adminOpenBtn} onPress={onOpen}>
+          <Feather name="unlock" size={18} color="#fff" />
+          <Text style={styles.adminOpenBtnText}>Ouvrir la Caisse</Text>
+        </Pressable>
+      )}
+    </ScrollView>
   );
 }
 
@@ -1186,5 +1309,152 @@ const styles = StyleSheet.create({
   txJourBadgeText: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
+  },
+  adminConsultContent: {
+    padding: 20,
+    gap: 16,
+    paddingBottom: 40,
+  },
+  adminBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#FDF8F0",
+    borderWidth: 1.5,
+    borderColor: "#E8D5B0",
+    borderRadius: 16,
+    padding: 16,
+  },
+  adminBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#FFF9F0",
+    borderWidth: 1,
+    borderColor: "#E8D5B0",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  adminBannerTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.accent,
+  },
+  adminBannerSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  adminDateCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    gap: 6,
+    alignItems: "center",
+  },
+  adminDateLabel: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.text,
+    textTransform: "capitalize",
+  },
+  adminHoursRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  adminHoursText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+  },
+  adminSessionCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    gap: 14,
+  },
+  adminSessionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  adminSessionText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.cash,
+  },
+  adminStatsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  adminStat: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  adminStatDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: COLORS.border,
+  },
+  adminStatValue: {
+    fontSize: 24,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.text,
+    letterSpacing: -0.5,
+  },
+  adminStatLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  adminNoSessionText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+    marginTop: 8,
+  },
+  adminActions: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: "hidden",
+  },
+  adminActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  adminActionText: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.text,
+  },
+  adminOpenBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: COLORS.accent,
+    borderRadius: 16,
+    padding: 18,
+  },
+  adminOpenBtnText: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
 });
