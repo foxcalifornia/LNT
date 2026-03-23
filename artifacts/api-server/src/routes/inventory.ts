@@ -9,6 +9,7 @@ import {
   insertVenteSchema,
 } from "@workspace/db/schema";
 import { eq, desc, gte } from "drizzle-orm";
+import { decrementerConsommables } from "../lib/consommables";
 
 const router: IRouter = Router();
 
@@ -147,6 +148,66 @@ router.post("/ventes", async (req, res) => {
       .where(eq(produitsTable.id, produitId));
 
     res.status(201).json(vente);
+  } catch (error) {
+    req.log.error(error);
+    res.status(500).json({ error: "Erreur lors de l'enregistrement de la vente" });
+  }
+});
+
+router.post("/ventes/batch", async (req, res) => {
+  try {
+    const { items, typePaiement } = req.body as {
+      items: { produitId: number; quantite: number }[];
+      typePaiement: "CASH";
+    };
+
+    if (!items || items.length === 0) {
+      res.status(400).json({ error: "Panier vide" });
+      return;
+    }
+    if (typePaiement !== "CASH") {
+      res.status(400).json({ error: "Ce endpoint est réservé aux ventes cash" });
+      return;
+    }
+
+    let totalArticles = 0;
+
+    for (const item of items) {
+      const [produit] = await db
+        .select()
+        .from(produitsTable)
+        .where(eq(produitsTable.id, item.produitId))
+        .limit(1);
+
+      if (!produit) {
+        res.status(404).json({ error: `Produit ${item.produitId} introuvable` });
+        return;
+      }
+      if (produit.quantite < item.quantite) {
+        res.status(400).json({ error: `Stock insuffisant pour produit ${item.produitId}` });
+        return;
+      }
+
+      const montantCentimes = produit.prixCentimes * item.quantite;
+
+      await db.insert(ventesTable).values({
+        produitId: item.produitId,
+        quantiteVendue: item.quantite,
+        typePaiement: "CASH",
+        montantCentimes,
+      });
+
+      await db
+        .update(produitsTable)
+        .set({ quantite: produit.quantite - item.quantite })
+        .where(eq(produitsTable.id, item.produitId));
+
+      totalArticles += item.quantite;
+    }
+
+    await decrementerConsommables(totalArticles);
+
+    res.status(201).json({ message: "Vente enregistrée", totalArticles });
   } catch (error) {
     req.log.error(error);
     res.status(500).json({ error: "Erreur lors de l'enregistrement de la vente" });

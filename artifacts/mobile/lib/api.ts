@@ -94,6 +94,14 @@ export type VentesJour = {
   total: number;
 };
 
+export type Consommable = {
+  id: number;
+  nom: string;
+  quantite: number;
+  stockMinimum: number;
+  createdAt: string;
+};
+
 export function formatPrix(centimes: number): string {
   return `€${(centimes / 100).toFixed(2).replace(".", ",")}`;
 }
@@ -140,6 +148,17 @@ export const api = {
     createVente: (data: { produitId: number; quantiteVendue: number; typePaiement: string }) =>
       request<Vente>("/ventes", {
         method: "POST",
+        body: JSON.stringify(data),
+      }),
+    batchVente: (data: { items: { produitId: number; quantite: number }[]; typePaiement: "CASH" }) =>
+      request<{ message: string; totalArticles: number }>("/ventes/batch", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    getConsommables: () => request<Consommable[]>("/consommables"),
+    updateConsommable: (id: number, data: { quantite?: number; stockMinimum?: number }) =>
+      request<Consommable>(`/consommables/${id}`, {
+        method: "PUT",
         body: JSON.stringify(data),
       }),
   },

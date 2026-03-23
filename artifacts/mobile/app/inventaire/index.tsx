@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import Colors from "@/constants/colors";
-import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import { api, formatPrix, type CollectionWithProduits, type Produit, type Consommable } from "@/lib/api";
 
 const COLORS = Colors.light;
 
@@ -36,6 +36,11 @@ export default function InventaireScreen() {
   const { data: collections = [], isLoading, refetch, isRefetching } = useQuery({
     queryKey: ["collections"],
     queryFn: api.inventory.getCollections,
+  });
+
+  const { data: consommables = [], refetch: refetchConsommables } = useQuery({
+    queryKey: ["consommables"],
+    queryFn: api.inventory.getConsommables,
   });
 
   const deleteCollectionMutation = useMutation({
@@ -166,6 +171,14 @@ export default function InventaireScreen() {
               />
             ))
           )}
+
+          <ConsommablesSection
+            consommables={consommables}
+            onUpdated={() => {
+              queryClient.invalidateQueries({ queryKey: ["consommables"] });
+              refetchConsommables();
+            }}
+          />
         </ScrollView>
       )}
 
@@ -564,6 +577,148 @@ function AlertRow({ produit }: { produit: Produit & { collectionNom: string } })
         />
       </View>
       <Text style={styles.alertProgressLabel}>{Math.round(pct)}% du minimum</Text>
+    </View>
+  );
+}
+
+function ConsommablesSection({ consommables, onUpdated }: {
+  consommables: Consommable[];
+  onUpdated: () => void;
+}) {
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editQty, setEditQty] = useState("");
+  const [editMin, setEditMin] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: { quantite?: number; stockMinimum?: number } }) =>
+      api.inventory.updateConsommable(id, data),
+    onSuccess: () => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setEditingId(null);
+      onUpdated();
+    },
+    onError: (err: any) => Alert.alert("Erreur", err.message),
+  });
+
+  const openEdit = (c: Consommable) => {
+    Haptics.selectionAsync();
+    setEditingId(c.id);
+    setEditQty(String(c.quantite));
+    setEditMin(String(c.stockMinimum));
+  };
+
+  const saveEdit = (id: number) => {
+    const qty = parseInt(editQty);
+    const min = parseInt(editMin);
+    if (isNaN(qty) || qty < 0) { Alert.alert("Erreur", "Quantité invalide"); return; }
+    mutation.mutate({ id, data: { quantite: qty, stockMinimum: isNaN(min) ? undefined : min } });
+  };
+
+  return (
+    <View style={styles.consommablesSection}>
+      <View style={styles.consommablesSectionHeader}>
+        <View style={styles.consommablesSectionIcon}>
+          <Feather name="shopping-bag" size={16} color={COLORS.accent} />
+        </View>
+        <View>
+          <Text style={styles.consommablesSectionTitle}>Sacs et Pochettes</Text>
+          <Text style={styles.consommablesSectionSub}>Déduits automatiquement à chaque vente</Text>
+        </View>
+      </View>
+
+      {consommables.map((c) => {
+        const isEditing = editingId === c.id;
+        const isLow = c.stockMinimum > 0 && c.quantite < c.stockMinimum;
+        const isEmpty = c.quantite === 0;
+
+        return (
+          <View key={c.id} style={[styles.consommableRow, isEditing && styles.consommableRowEditing]}>
+            {isEditing ? (
+              <View style={styles.consommableEditInner}>
+                <Text style={styles.consommableEditLabel}>{c.nom}</Text>
+                <View style={styles.consommableEditFields}>
+                  <View style={styles.consommableEditField}>
+                    <Text style={styles.consommableFieldLabel}>Stock actuel</Text>
+                    <TextInput
+                      style={styles.consommableInput}
+                      value={editQty}
+                      onChangeText={setEditQty}
+                      keyboardType="numeric"
+                      selectTextOnFocus
+                      autoFocus
+                    />
+                  </View>
+                  <View style={styles.consommableEditField}>
+                    <Text style={styles.consommableFieldLabel}>Stock min.</Text>
+                    <TextInput
+                      style={styles.consommableInput}
+                      value={editMin}
+                      onChangeText={setEditMin}
+                      keyboardType="numeric"
+                      selectTextOnFocus
+                    />
+                  </View>
+                </View>
+                <View style={styles.consommableEditBtns}>
+                  <Pressable
+                    style={styles.consommableCancelBtn}
+                    onPress={() => setEditingId(null)}
+                  >
+                    <Text style={styles.consommableCancelText}>Annuler</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.consommableSaveBtn, mutation.isPending && { opacity: 0.5 }]}
+                    onPress={() => saveEdit(c.id)}
+                    disabled={mutation.isPending}
+                  >
+                    {mutation.isPending ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.consommableSaveText}>Enregistrer</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <>
+                <View style={styles.consommableInfo}>
+                  <Text style={styles.consommableNom}>{c.nom}</Text>
+                  {c.nom === "Sac" && (
+                    <Text style={styles.consommableHint}>-1 par vente</Text>
+                  )}
+                  {c.nom === "Pochette" && (
+                    <Text style={styles.consommableHint}>-1 par article vendu</Text>
+                  )}
+                </View>
+                <View style={styles.consommableRight}>
+                  {isLow && !isEmpty && (
+                    <Feather name="alert-triangle" size={13} color="#F59E0B" style={{ marginRight: 6 }} />
+                  )}
+                  <Text
+                    style={[
+                      styles.consommableQty,
+                      isEmpty
+                        ? { color: COLORS.danger }
+                        : isLow
+                        ? { color: "#F59E0B" }
+                        : { color: COLORS.cash },
+                    ]}
+                  >
+                    {c.quantite}
+                  </Text>
+                  <Text style={styles.consommableUnit}> {c.nom === "Sac" ? "sac" : "pochette"}{c.quantite !== 1 ? "s" : ""}</Text>
+                  <Pressable
+                    style={styles.consommableEditBtn}
+                    onPress={() => openEdit(c)}
+                  >
+                    <Feather name="edit-2" size={14} color={COLORS.textSecondary} />
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -1172,4 +1327,92 @@ const styles = StyleSheet.create({
   },
   formConfirmText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff" },
   btnDisabled: { opacity: 0.4 },
+  consommablesSection: {
+    marginTop: 24, marginBottom: 8,
+    backgroundColor: COLORS.card,
+    borderRadius: 18, borderWidth: 1.5, borderColor: COLORS.border,
+    overflow: "hidden",
+  },
+  consommablesSectionHeader: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  consommablesSectionIcon: {
+    width: 34, height: 34, borderRadius: 10,
+    backgroundColor: "#FDF8F0",
+    borderWidth: 1, borderColor: "#E8D5B0",
+    justifyContent: "center", alignItems: "center",
+  },
+  consommablesSectionTitle: {
+    fontSize: 15, fontFamily: "Inter_700Bold", color: COLORS.text,
+  },
+  consommablesSectionSub: {
+    fontSize: 11, fontFamily: "Inter_400Regular", color: COLORS.textSecondary,
+    marginTop: 1,
+  },
+  consommableRow: {
+    flexDirection: "row", alignItems: "center",
+    paddingVertical: 14, paddingHorizontal: 16,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  consommableRowEditing: {
+    paddingVertical: 14, flexDirection: "column", alignItems: "stretch",
+  },
+  consommableInfo: { flex: 1 },
+  consommableNom: {
+    fontSize: 15, fontFamily: "Inter_600SemiBold", color: COLORS.text,
+  },
+  consommableHint: {
+    fontSize: 12, fontFamily: "Inter_400Regular", color: COLORS.textSecondary, marginTop: 2,
+  },
+  consommableRight: {
+    flexDirection: "row", alignItems: "center",
+  },
+  consommableQty: {
+    fontSize: 18, fontFamily: "Inter_700Bold",
+  },
+  consommableUnit: {
+    fontSize: 13, fontFamily: "Inter_400Regular", color: COLORS.textSecondary, marginRight: 8,
+  },
+  consommableEditBtn: {
+    width: 32, height: 32, borderRadius: 8,
+    backgroundColor: COLORS.background,
+    justifyContent: "center", alignItems: "center",
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  consommableEditInner: { gap: 12 },
+  consommableEditLabel: {
+    fontSize: 15, fontFamily: "Inter_700Bold", color: COLORS.text,
+  },
+  consommableEditFields: { flexDirection: "row", gap: 12 },
+  consommableEditField: { flex: 1, gap: 6 },
+  consommableFieldLabel: {
+    fontSize: 11, fontFamily: "Inter_600SemiBold",
+    color: COLORS.textSecondary, textTransform: "uppercase", letterSpacing: 0.8,
+  },
+  consommableInput: {
+    height: 44, borderRadius: 10,
+    borderWidth: 1.5, borderColor: COLORS.accent,
+    fontSize: 18, fontFamily: "Inter_700Bold",
+    color: COLORS.text, textAlign: "center",
+    backgroundColor: COLORS.background,
+  },
+  consommableEditBtns: { flexDirection: "row", gap: 10 },
+  consommableCancelBtn: {
+    flex: 1, height: 40, borderRadius: 10,
+    borderWidth: 1.5, borderColor: COLORS.border,
+    justifyContent: "center", alignItems: "center",
+  },
+  consommableCancelText: {
+    fontSize: 14, fontFamily: "Inter_600SemiBold", color: COLORS.textSecondary,
+  },
+  consommableSaveBtn: {
+    flex: 1, height: 40, borderRadius: 10,
+    backgroundColor: COLORS.accent,
+    justifyContent: "center", alignItems: "center",
+  },
+  consommableSaveText: {
+    fontSize: 14, fontFamily: "Inter_700Bold", color: "#fff",
+  },
 });

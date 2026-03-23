@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { sessionsTable, insertSessionSchema } from "@workspace/db/schema";
 import { ventesTable, produitsTable, collectionsTable } from "@workspace/db/schema";
 import { desc, gte, eq, and, lte } from "drizzle-orm";
+import { restaurerConsommables } from "../lib/consommables";
 
 const router: IRouter = Router();
 
@@ -117,6 +118,8 @@ router.delete("/ventes/last", async (req, res) => {
 
     req.log.info({ transactionVentes: transactionVentes.length }, "DELETE /ventes/last: cancelling ventes");
 
+    let totalArticlesRestores = 0;
+
     for (const vente of transactionVentes) {
       const [current] = await db
         .select({ quantite: produitsTable.quantite })
@@ -129,6 +132,11 @@ router.delete("/ventes/last", async (req, res) => {
           .where(eq(produitsTable.id, vente.produitId));
       }
       await db.delete(ventesTable).where(eq(ventesTable.id, vente.id));
+      totalArticlesRestores += vente.quantiteVendue;
+    }
+
+    if (totalArticlesRestores > 0) {
+      await restaurerConsommables(totalArticlesRestores);
     }
 
     res.json({ cancelled: transactionVentes.length, message: "Vente annulée avec succès" });

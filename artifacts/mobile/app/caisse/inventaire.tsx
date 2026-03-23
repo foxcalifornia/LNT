@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 
 import Colors from "@/constants/colors";
-import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import { api, formatPrix, type CollectionWithProduits, type Produit, type Consommable } from "@/lib/api";
 
 const COLORS = Colors.light;
 
@@ -23,6 +23,11 @@ export default function InventaireScreen() {
   const { data: collections = [], isLoading, refetch } = useQuery({
     queryKey: ["collections"],
     queryFn: api.inventory.getCollections,
+  });
+
+  const { data: consommables = [] } = useQuery({
+    queryKey: ["consommables"],
+    queryFn: api.inventory.getConsommables,
   });
 
   const toggle = (id: number) => setExpanded((prev) => (prev === id ? null : id));
@@ -130,12 +135,61 @@ export default function InventaireScreen() {
             </View>
           )
         }
+        ListFooterComponent={
+          <ConsommablesReadonlySection consommables={consommables} />
+        }
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.listContent,
           { paddingBottom: Math.max(insets.bottom, 24) },
         ]}
       />
+    </View>
+  );
+}
+
+function ConsommablesReadonlySection({ consommables }: { consommables: Consommable[] }) {
+  if (consommables.length === 0) return null;
+  return (
+    <View style={styles.consomSection}>
+      <View style={styles.consomHeader}>
+        <Feather name="shopping-bag" size={14} color={COLORS.accent} />
+        <Text style={styles.consomTitle}>Sacs & Pochettes</Text>
+      </View>
+      {consommables.map((c) => {
+        const isLow = c.stockMinimum > 0 && c.quantite < c.stockMinimum;
+        const isEmpty = c.quantite === 0;
+        return (
+          <View key={c.id} style={styles.consomRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.consomNom}>{c.nom}</Text>
+              <Text style={styles.consomHint}>
+                {c.nom === "Sac" ? "-1 par vente" : "-1 par article"}
+              </Text>
+            </View>
+            <View style={styles.consomRight}>
+              {isLow && !isEmpty && (
+                <Feather name="alert-triangle" size={13} color="#F59E0B" style={{ marginRight: 4 }} />
+              )}
+              <Text
+                style={[
+                  styles.consomQty,
+                  isEmpty
+                    ? { color: COLORS.danger }
+                    : isLow
+                    ? { color: "#F59E0B" }
+                    : { color: COLORS.cash },
+                ]}
+              >
+                {c.quantite}
+              </Text>
+              <Text style={styles.consomUnit}>
+                {" "}{c.nom === "Sac" ? "sac" : "pochette"}{c.quantite !== 1 ? "s" : ""}
+              </Text>
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -378,5 +432,41 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textAlign: "center",
     paddingVertical: 12,
+  },
+  consomSection: {
+    marginHorizontal: 0, marginTop: 8, marginBottom: 8,
+    backgroundColor: COLORS.card,
+    borderRadius: 16, borderWidth: 1.5, borderColor: COLORS.border,
+    overflow: "hidden",
+  },
+  consomHeader: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    padding: 14,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  consomTitle: {
+    fontSize: 13, fontFamily: "Inter_700Bold", color: COLORS.text,
+    textTransform: "uppercase", letterSpacing: 0.8,
+  },
+  consomRow: {
+    flexDirection: "row", alignItems: "center",
+    paddingVertical: 12, paddingHorizontal: 14,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border + "60",
+  },
+  consomNom: {
+    fontSize: 14, fontFamily: "Inter_600SemiBold", color: COLORS.text,
+  },
+  consomHint: {
+    fontSize: 11, fontFamily: "Inter_400Regular", color: COLORS.textSecondary, marginTop: 2,
+  },
+  consomRight: {
+    flexDirection: "row", alignItems: "center",
+  },
+  consomQty: {
+    fontSize: 16, fontFamily: "Inter_700Bold",
+  },
+  consomUnit: {
+    fontSize: 12, fontFamily: "Inter_400Regular", color: COLORS.textSecondary,
   },
 });

@@ -9,6 +9,7 @@ import {
   getSumUpCheckoutStatus,
   deleteSumUpCheckout,
 } from "../lib/sumup";
+import { decrementerConsommables } from "../lib/consommables";
 
 const router: IRouter = Router();
 
@@ -182,6 +183,8 @@ router.post("/confirm", async (req, res) => {
         .where(eq(sumupCheckoutsTable.saleReference, saleReference));
     }
 
+    let totalArticles = 0;
+
     for (const item of items) {
       const [produit] = await db
         .select({ quantite: produitsTable.quantite, prixCentimes: produitsTable.prixCentimes })
@@ -202,7 +205,11 @@ router.post("/confirm", async (req, res) => {
       await db.update(produitsTable)
         .set({ quantite: Math.max(0, produit.quantite - item.quantite) })
         .where(eq(produitsTable.id, item.produitId));
+
+      totalArticles += item.quantite;
     }
+
+    await decrementerConsommables(totalArticles);
 
     await db.update(sumupCheckoutsTable)
       .set({ statut: "CONFIRMED", confirmedLocally: 1 })

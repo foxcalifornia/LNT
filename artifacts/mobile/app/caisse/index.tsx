@@ -163,15 +163,10 @@ export default function CaisseScreen() {
     if (paymentMode === "carte") {
       throw new Error("Les paiements carte doivent passer par le terminal SumUp.");
     }
-    for (const item of items) {
-      await api.inventory.createVente({
-        produitId: item.produitId,
-        quantiteVendue: item.quantite,
-        typePaiement: "CASH",
-      });
-    }
+    await api.inventory.batchVente({ items, typePaiement: "CASH" });
     refetchCollections();
     queryClient.invalidateQueries({ queryKey: ["ventesJour"] });
+    queryClient.invalidateQueries({ queryKey: ["consommables"] });
   };
 
   const handleCancelLastVente = async () => {
