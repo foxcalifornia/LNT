@@ -4,7 +4,6 @@ import { router } from "expo-router";
 import React from "react";
 import {
   Alert,
-  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -64,11 +63,11 @@ export default function HomeScreen() {
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
 
       <View style={styles.header}>
-        <Image
-          source={require("../../assets/logo-lnt-transparent.png")}
-          style={styles.logoImage}
-          resizeMode="contain"
-        />
+        <View style={styles.logoContainer}>
+          <Text style={styles.logoText}>LNT</Text>
+          <View style={styles.logoDivider} />
+          <Text style={styles.logoSubText}>PARIS</Text>
+        </View>
         <Text style={styles.tagline}>Gestion de Stock</Text>
 
         <View style={[styles.roleBadge, { backgroundColor: roleBg, borderColor: roleColor + "40" }]}>
@@ -176,9 +175,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  logoImage: {
-    width: 200,
-    height: 100,
+  logoContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  logoText: {
+    fontSize: 38,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.primary,
+    letterSpacing: 8,
+  },
+  logoDivider: {
+    width: 1.5,
+    height: 32,
+    backgroundColor: COLORS.accent,
+    marginHorizontal: 4,
+  },
+  logoSubText: {
+    fontSize: 38,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.accent,
+    letterSpacing: 8,
   },
   tagline: {
     fontSize: 13,

@@ -65,7 +65,7 @@ function RootLayoutNav() {
         }}
       />
       <Stack.Screen
-        name="parametres/index"
+        name="parametres"
         options={{
           presentation: "fullScreenModal",
           headerShown: false,
