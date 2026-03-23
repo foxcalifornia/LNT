@@ -243,9 +243,13 @@ export default function CaisseScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
-          <Feather name="x" size={22} color={COLORS.text} />
-        </Pressable>
+        {isAdmin ? (
+          <Pressable style={styles.backBtn} onPress={() => router.back()}>
+            <Feather name="x" size={22} color={COLORS.text} />
+          </Pressable>
+        ) : (
+          <View style={{ width: 40 }} />
+        )}
         <Text style={styles.headerTitle}>Caisse</Text>
         <View style={{ width: 40 }} />
       </View>
