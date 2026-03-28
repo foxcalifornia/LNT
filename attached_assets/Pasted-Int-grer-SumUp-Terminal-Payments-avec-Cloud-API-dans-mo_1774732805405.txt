@@ -1,0 +1,57 @@
+Intégrer SumUp Terminal Payments avec Cloud API dans mon application de caisse.
+
+Je veux utiliser une intégration directe avec API key côté backend.
+
+Objectif :
+Quand je clique sur “Payer en carte bancaire”, le backend doit envoyer le montant total de la transaction au terminal SumUp via Cloud API. Ensuite l’application doit récupérer le statut réel du paiement. Si le paiement est réussi, enregistrer la vente dans l’application, enregistrer les identifiants SumUp, déduire le stock, mettre à jour la caisse et le reporting. Si le paiement échoue ou est annulé, ne rien enregistrer et proposer de réessayer.
+
+Contraintes :
+- Utiliser SumUp Terminal Payments / Cloud API
+- Authentification avec API key côté backend uniquement
+- Prévoir aussi l’affiliate key requise pour les paiements sur terminal
+- Ne jamais exposer les secrets SumUp dans le frontend
+- Le frontend appelle uniquement mon backend
+
+Flux attendu :
+1. Le vendeur ajoute les produits au panier
+2. Il clique sur “Payer en carte bancaire”
+3. Le frontend envoie au backend :
+   - montant total
+   - devise EUR
+   - référence unique de vente
+   - description
+4. Le backend crée la transaction SumUp Cloud API
+5. Le montant doit s’afficher sur le terminal SumUp
+6. L’application attend le statut réel du paiement
+7. Si statut = success :
+   - enregistrer la vente
+   - enregistrer les lignes produits
+   - enregistrer payment_method = card
+   - enregistrer payment_status
+   - enregistrer sumup_transaction_id
+   - déduire le stock
+   - mettre à jour la caisse
+   - mettre à jour le reporting
+   - vider le panier
+8. Si statut = failed / cancelled / expired :
+   - ne pas enregistrer la vente
+   - ne pas modifier le stock
+   - ne pas vider le panier
+   - afficher “Paiement échoué ou annulé”
+   - proposer “Réessayer”
+
+Créer les endpoints backend nécessaires, par exemple :
+- POST /api/payments/sumup/create
+- GET /api/payments/sumup/status/:id
+- POST /api/sales/confirm-card-sale
+
+Ajouter des logs de debug à chaque étape :
+- montant envoyé
+- création de transaction
+- identifiant SumUp
+- statut retourné
+- enregistrement local
+- erreurs détaillées
+
+Règle métier obligatoire :
+Aucune vente carte bancaire ne doit être enregistrée localement sans confirmation réelle du paiement SumUp.
