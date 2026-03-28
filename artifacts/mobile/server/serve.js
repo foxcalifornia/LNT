@@ -107,12 +107,47 @@ function serveStaticFile(urlPath, res) {
 const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
 const appName = getAppName();
 
+const API_PORT = 8080;
+
+function proxyToApi(req, res) {
+  const options = {
+    hostname: "localhost",
+    port: API_PORT,
+    path: req.url,
+    method: req.method,
+    headers: { ...req.headers, host: `localhost:${API_PORT}` },
+  };
+
+  const proxyReq = http.request(options, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res, { end: true });
+  });
+
+  proxyReq.on("error", (err) => {
+    console.error("Proxy error:", err.message);
+    res.writeHead(502);
+    res.end("Bad Gateway");
+  });
+
+  req.pipe(proxyReq, { end: true });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
   let pathname = url.pathname;
 
   if (basePath && pathname.startsWith(basePath)) {
     pathname = pathname.slice(basePath.length) || "/";
+  }
+
+  // Proxy /api/* and OAuth callback routes to the Express API server
+  if (
+    pathname.startsWith("/api/") ||
+    pathname === "/api" ||
+    pathname === "/callback" ||
+    pathname === "/auth/sumup"
+  ) {
+    return proxyToApi(req, res);
   }
 
   if (pathname === "/" || pathname === "/manifest") {
