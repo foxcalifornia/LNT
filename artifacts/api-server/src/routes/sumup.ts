@@ -144,13 +144,15 @@ router.get("/status/:saleReference", async (req, res) => {
       transactionId = sumupStatus.transaction_id;
     } catch { /* ignore */ }
 
-    // 2. If still PENDING, check terminal transaction history (requires transactions.history scope)
+    // 2. If still PENDING, check terminal transaction history
     if (dbStatut === "PENDING") {
       const termTx = await getTerminalTransactionByClientRef(record.sumupCheckoutId);
       if (termTx?.status === "PAID") {
         dbStatut = "PAID";
         transactionId = termTx.id;
         await logPayment({ saleReference, action: "terminal_tx_found", responsePayload: termTx, statut: "PAID" });
+      } else if (termTx && "debugError" in termTx && termTx.debugError) {
+        await logPayment({ saleReference, action: "terminal_tx_debug", responsePayload: { debugError: termTx.debugError }, statut: "PENDING" });
       }
     }
 

@@ -215,23 +215,48 @@ export async function getTerminalTransactionByClientRef(clientRef: string): Prom
   id: string;
   transaction_code?: string;
   amount?: number;
+  debugError?: string;
 } | null> {
-  try {
-    const token = await getUserToken();
+  // Try 1: client_credentials token (already requests transactions.history scope)
+  const tryWithToken = async (token: string, label: string): Promise<{
+    status: string; id: string; transaction_code?: string; amount?: number;
+  } | null | { debugError: string }> => {
     const res = await fetch(
       `${SUMUP_BASE}/v0.1/me/transactions/history?client_transaction_id=${encodeURIComponent(clientRef)}&limit=5`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
-    if (!res.ok) return null; // 403 = scope missing, silently ignore
+    if (!res.ok) {
+      const txt = await res.text();
+      return { debugError: `${label} → ${res.status}: ${txt}` };
+    }
     const data = await res.json() as {
       items?: Array<{ id: string; status: string; transaction_code?: string; amount?: number }>;
     };
     const items = data.items ?? [];
-    // Find a successful transaction
-    const paid = items.find((t) => t.status?.toUpperCase() === "SUCCESSFUL" || t.status?.toUpperCase() === "PAID");
+    const paid = items.find((t) => ["SUCCESSFUL", "PAID"].includes(t.status?.toUpperCase()));
     if (paid) return { status: "PAID", id: paid.id, transaction_code: paid.transaction_code, amount: paid.amount };
-    // Return the most recent one if it exists
     if (items.length > 0) return { status: items[0].status ?? "PENDING", id: items[0].id };
+    return null;
+  };
+
+  try {
+    // Try with client_credentials token first (no OAuth needed)
+    const ccToken = await getSumUpToken();
+    const ccResult = await tryWithToken(ccToken, "client_credentials");
+    if (ccResult && !("debugError" in ccResult)) return ccResult;
+
+    // Try with user token (OAuth, may have transactions.history scope)
+    try {
+      const userToken = await getUserToken();
+      const userResult = await tryWithToken(userToken, "user_token");
+      if (userResult && !("debugError" in userResult)) return userResult;
+      if (userResult && "debugError" in userResult) {
+        return { status: "PENDING", id: "", debugError: `cc: ${(ccResult as { debugError: string })?.debugError ?? "null"} | user: ${userResult.debugError}` };
+      }
+    } catch {
+      // No user token configured
+    }
+
     return null;
   } catch {
     return null;
