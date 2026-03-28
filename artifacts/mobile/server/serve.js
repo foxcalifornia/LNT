@@ -1,10 +1,11 @@
 /**
  * Standalone production server for Expo static builds.
  *
- * Serves the output of build.js (static-build/) with two special routes:
+ * Special routes handled directly (avoid /api/* which Replit intercepts):
+ * - GET /sumup-connect → redirects to SumUp OAuth authorize page
+ * - GET /sumup-callback → proxies to internal API server for token exchange
  * - GET / or /manifest with expo-platform header → platform manifest JSON
  * - GET / without expo-platform → landing page HTML
- * /api/* requests are proxied to the API server on port 8080.
  * Everything else falls through to static file serving from ./static-build/.
  *
  * Zero external dependencies — uses only Node.js built-ins (http, fs, path).
@@ -16,11 +17,11 @@ const path = require("path");
 
 const API_PORT = parseInt(process.env.API_PORT || "8080", 10);
 
-function proxyToApi(req, res, pathname) {
+function proxyToInternal(req, res, internalPath) {
   const options = {
     hostname: "localhost",
     port: API_PORT,
-    path: req.url,
+    path: internalPath,
     method: req.method,
     headers: { ...req.headers, host: `localhost:${API_PORT}` },
   };
@@ -31,9 +32,9 @@ function proxyToApi(req, res, pathname) {
   });
 
   proxyReq.on("error", (err) => {
-    console.error("API proxy error:", err.message);
-    res.writeHead(502);
-    res.end("Bad Gateway");
+    console.error("Internal proxy error:", err.message);
+    res.writeHead(502, { "content-type": "text/plain" });
+    res.end("Bad Gateway — API server unreachable");
   });
 
   req.pipe(proxyReq, { end: true });
@@ -141,17 +142,23 @@ const server = http.createServer((req, res) => {
     pathname = pathname.slice(basePath.length) || "/";
   }
 
-  console.log(`[serve] ${req.method} ${req.url} → pathname="${pathname}" basePath="${basePath}"`);
-
-  if (pathname === "/api/ping") {
-    res.writeHead(200, { "content-type": "text/plain" });
-    res.end("PONG-v2");
+  // SumUp OAuth — uses non-/api/ paths to bypass Replit's routing interception
+  if (pathname === "/sumup-connect") {
+    const CLIENT_ID = process.env.SUMUP_CLIENT_ID || "";
+    const REDIRECT_URI = "https://lntparis.replit.app/sumup-callback";
+    const SCOPES = "payments readers.read readers.write transactions.history";
+    const authUrl = `https://api.sumup.com/authorize?response_type=code&client_id=${encodeURIComponent(CLIENT_ID)}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}`;
+    console.log(`[serve] SumUp connect → ${authUrl.substring(0, 80)}...`);
+    res.writeHead(302, { Location: authUrl });
+    res.end();
     return;
   }
 
-  if (pathname.startsWith("/api/") || pathname === "/api") {
-    console.log(`[serve] proxying to API server port ${API_PORT}`);
-    return proxyToApi(req, res, pathname);
+  if (pathname === "/sumup-callback") {
+    const qs = url.search || "";
+    console.log(`[serve] SumUp callback → proxying to API server with${qs}`);
+    proxyToInternal(req, res, `/api/callback${qs}`);
+    return;
   }
 
   if (pathname === "/" || pathname === "/manifest") {
