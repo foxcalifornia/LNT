@@ -137,61 +137,46 @@ router.get("/status/:saleReference", async (req, res) => {
     let dbStatut: string = record.statut ?? "PENDING";
     let transactionId: string | undefined;
 
-    // ─── Primary: poll transaction history ───
-    // We search by client_transaction_id (= checkout.id we sent as client_id)
-    // AND by recent amount match as fallback within the lookup function.
+    // ─── Primary: checkout API ───
+    // With the merchants/readers endpoint, the checkout status updates to PAID
+    // automatically after the terminal payment succeeds.
     try {
-      const txn = await getTransactionByClientId(
-        record.sumupCheckoutId,
-        record.montantCentimes / 100,
-        record.createdAt ?? new Date(Date.now() - 10 * 60 * 1000),
-      );
-
-      if (txn) {
-        const s = txn.status.toUpperCase();
-        req.log.info({ saleReference, txnStatus: s, txnId: txn.transactionId }, "Transaction found in SumUp history");
-
-        if (s === "SUCCESSFUL") {
-          dbStatut = "PAID";
-          transactionId = txn.transactionId;
-        } else if (s === "FAILED" || s === "CANCELLED" || s === "EXPIRED") {
-          dbStatut = "FAILED";
-          transactionId = txn.transactionId;
-        }
-
-        await logPayment({
-          saleReference,
-          action: "status_poll_txn_history",
-          responsePayload: { txnStatus: txn.status, transactionId: txn.transactionId },
-          statut: dbStatut,
-        });
-      } else {
-        req.log.info({ saleReference, checkoutId: record.sumupCheckoutId }, "No matching transaction in SumUp history yet");
+      const checkoutStatus = await getSumUpCheckoutStatus(record.sumupCheckoutId);
+      const normalized = checkoutStatus.status.toUpperCase();
+      req.log.info({ saleReference, checkoutStatus: normalized }, "Checkout API status");
+      if (normalized === "PAID") {
+        dbStatut = "PAID";
+        transactionId = checkoutStatus.transaction_id;
+      } else if (normalized === "FAILED" || normalized === "EXPIRED") {
+        dbStatut = "FAILED";
       }
-    } catch (txnErr) {
-      req.log.warn({ err: txnErr }, "getTransactionByClientId failed");
+      await logPayment({
+        saleReference,
+        action: "status_poll_checkout_api",
+        responsePayload: { checkoutStatus: checkoutStatus.status },
+        statut: dbStatut,
+      });
+    } catch (checkoutErr) {
+      req.log.warn({ err: checkoutErr }, "getSumUpCheckoutStatus failed");
     }
 
-    // ─── Fallback: checkout API ───
+    // ─── Fallback: transaction history ───
+    // Used only if checkout API still shows PENDING (legacy terminals endpoint).
     if (dbStatut === "PENDING") {
       try {
-        const checkoutStatus = await getSumUpCheckoutStatus(record.sumupCheckoutId);
-        const normalized = checkoutStatus.status.toUpperCase();
-        req.log.info({ saleReference, checkoutStatus: normalized }, "Checkout API status");
-        if (normalized === "PAID") {
-          dbStatut = "PAID";
-          transactionId = checkoutStatus.transaction_id;
-        } else if (normalized === "FAILED" || normalized === "EXPIRED") {
-          dbStatut = "FAILED";
+        const txn = await getTransactionByClientId(
+          record.sumupCheckoutId,
+          record.montantCentimes / 100,
+          record.createdAt ?? new Date(Date.now() - 10 * 60 * 1000),
+        );
+        if (txn) {
+          const s = txn.status.toUpperCase();
+          req.log.info({ saleReference, txnStatus: s }, "Transaction found in history fallback");
+          if (s === "SUCCESSFUL") { dbStatut = "PAID"; transactionId = txn.transactionId; }
+          else if (s === "FAILED" || s === "CANCELLED" || s === "EXPIRED") { dbStatut = "FAILED"; transactionId = txn.transactionId; }
         }
-        await logPayment({
-          saleReference,
-          action: "status_poll_checkout_api",
-          responsePayload: { checkoutStatus: checkoutStatus.status },
-          statut: dbStatut,
-        });
       } catch {
-        // Expected: terminal payments don't appear in checkout API
+        // Scope issue — no transactions.history access
       }
     }
 

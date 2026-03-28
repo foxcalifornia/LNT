@@ -166,30 +166,50 @@ export async function sendCheckoutToReader(
   opts: { amountEur: number; currency: string; description?: string; clientRef: string }
 ): Promise<void> {
   const token = await getUserToken();
+  const merchantCode = process.env["SUMUP_MERCHANT_CODE"] ?? "MC4VDM6U";
 
-  const res = await fetch(`${SUMUP_BASE}/v0.1/terminals/${readerId}/checkout`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      amount: opts.amountEur,
-      currency: opts.currency,
-      client_id: opts.clientRef,
-      description: opts.description ?? "LNT Paris",
-    }),
-  });
+  // Use the Merchant Readers API — this links the terminal payment to the checkout
+  // object so that GET /v0.1/checkouts/{id} updates to PAID automatically.
+  const res = await fetch(
+    `${SUMUP_BASE}/v0.1/merchants/${merchantCode}/readers/${readerId}/checkout`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ checkout_id: opts.clientRef }),
+    }
+  );
 
   if (!res.ok) {
     const txt = await res.text();
-    if (res.status === 401) {
-      process.env["SUMUP_USER_TOKEN"] = "";
-    }
+    if (res.status === 401) process.env["SUMUP_USER_TOKEN"] = "";
     if (res.status === 422 && txt.includes("pending transaction already exists")) {
       throw new Error("Un paiement est déjà en cours sur le terminal. Annulez-le sur le terminal SumUp puis réessayez.");
     }
-    throw new Error(`SumUp sendToReader error ${res.status}: ${txt}`);
+    // Fallback to legacy terminals endpoint if merchants endpoint fails
+    const res2 = await fetch(`${SUMUP_BASE}/v0.1/terminals/${readerId}/checkout`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        amount: opts.amountEur,
+        currency: opts.currency,
+        client_id: opts.clientRef,
+        description: opts.description ?? "LNT Paris",
+      }),
+    });
+    if (!res2.ok) {
+      const txt2 = await res2.text();
+      if (res2.status === 401) process.env["SUMUP_USER_TOKEN"] = "";
+      if (res2.status === 422 && txt2.includes("pending transaction already exists")) {
+        throw new Error("Un paiement est déjà en cours sur le terminal. Annulez-le sur le terminal SumUp puis réessayez.");
+      }
+      throw new Error(`SumUp sendToReader error ${res2.status}: ${txt2} (merchants: ${res.status}: ${txt})`);
+    }
   }
 }
 
