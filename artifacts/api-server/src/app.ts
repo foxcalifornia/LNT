@@ -38,11 +38,13 @@ const handleAuthSumup = (req: Request, res: Response) => {
   const CLIENT_ID = process.env["SUMUP_CLIENT_ID"] ?? "";
   // Use /callback (already registered in SumUp developer portal)
   const REDIRECT_URI = "https://lntparis.replit.app/callback";
-  // Do NOT include "payments" (restricted scope) — it causes 404 on SumUp's authorize endpoint.
+  // Do NOT include "payments" (restricted scope) — it causes issues on SumUp's authorize endpoint.
   // The CC token handles payments creation. The user token only needs transaction history.
   const scope = "transactions.history readers.read readers.write";
 
-  const url = new URL("https://auth.sumup.com/authorize");
+  // IMPORTANT: The correct OAuth URL is api.sumup.com/authorize (NOT auth.sumup.com/authorize — that returns 404)
+  // api.sumup.com/authorize → 302 → auth.sumup.com/flows/login → correct login page
+  const url = new URL("https://api.sumup.com/authorize");
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", CLIENT_ID);
   url.searchParams.set("redirect_uri", REDIRECT_URI);
