@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import crypto from "node:crypto";
 import { db } from "@workspace/db";
 import { sumupCheckoutsTable, paymentLogsTable, ventesTable, produitsTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import {
   createSumUpCheckout,
   sendCheckoutToReader,
@@ -161,22 +161,44 @@ router.get("/status/:saleReference", async (req, res) => {
     }
 
     // ─── Fallback: transaction history ───
-    // Used only if checkout API still shows PENDING (legacy terminals endpoint).
+    // Used only if checkout API still shows PENDING (always the case for SumUp Solo terminals).
+    // No time-window: avoids server clock mismatch (Replit env may be ahead of SumUp's real time).
+    // Deduplication: a found transaction ID must not be already linked to another checkout.
     if (dbStatut === "PENDING") {
       try {
         const txn = await getTransactionByClientId(
           record.sumupCheckoutId,
           record.montantCentimes / 100,
-          record.createdAt ?? new Date(Date.now() - 10 * 60 * 1000),
         );
         if (txn) {
           const s = txn.status.toUpperCase();
-          req.log.info({ saleReference, txnStatus: s }, "Transaction found in history fallback");
-          if (s === "SUCCESSFUL") { dbStatut = "PAID"; transactionId = txn.transactionId; }
-          else if (s === "FAILED" || s === "CANCELLED" || s === "EXPIRED") { dbStatut = "FAILED"; transactionId = txn.transactionId; }
+          req.log.info({ saleReference, txnStatus: s, txnId: txn.transactionId }, "Transaction found in history fallback");
+
+          // Anti-doublon: skip if this transaction ID is already linked to another checkout
+          let alreadyUsed = false;
+          if (txn.transactionId) {
+            const [existing] = await db
+              .select({ id: sumupCheckoutsTable.saleReference })
+              .from(sumupCheckoutsTable)
+              .where(
+                and(
+                  eq(sumupCheckoutsTable.sumupTransactionId, txn.transactionId),
+                  ne(sumupCheckoutsTable.saleReference, saleReference),
+                ),
+              )
+              .limit(1);
+            alreadyUsed = !!existing;
+          }
+
+          if (!alreadyUsed) {
+            if (s === "SUCCESSFUL") { dbStatut = "PAID"; transactionId = txn.transactionId; }
+            else if (s === "FAILED" || s === "CANCELLED" || s === "EXPIRED") { dbStatut = "FAILED"; transactionId = txn.transactionId; }
+          } else {
+            req.log.warn({ saleReference, txnId: txn.transactionId }, "Transaction already linked to another checkout — skipping");
+          }
         }
-      } catch {
-        // Scope issue — no transactions.history access
+      } catch (histErr) {
+        req.log.warn({ err: histErr }, "Transaction history fallback failed");
       }
     }
 

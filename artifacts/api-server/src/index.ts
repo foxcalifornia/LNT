@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { initSumUpTokensFromDb } from "./lib/sumup";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,12 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Preload SumUp user tokens from DB so the first payment status check
+  // after restart doesn't fail with 403 (env vars are empty until first request)
+  initSumUpTokensFromDb().then(() => {
+    logger.info("SumUp tokens preloaded from DB");
+  }).catch(() => {
+    logger.warn("SumUp tokens preload failed — will load lazily on first request");
+  });
 });

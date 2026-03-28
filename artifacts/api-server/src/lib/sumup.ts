@@ -28,6 +28,25 @@ export async function persistSumUpTokens(userToken: string, refreshToken: string
   process.env["SUMUP_REFRESH_TOKEN"] = refreshToken;
 }
 
+/**
+ * Preloads SumUp user tokens from DB into process.env at server startup.
+ * This avoids a 403 on the first request after restart (env var is empty until first call).
+ */
+export async function initSumUpTokensFromDb(): Promise<void> {
+  try {
+    const userToken = await getDbToken("sumup_user_token");
+    if (userToken) {
+      process.env["SUMUP_USER_TOKEN"] = userToken;
+    }
+    const refreshToken = await getDbToken("sumup_refresh_token");
+    if (refreshToken) {
+      process.env["SUMUP_REFRESH_TOKEN"] = refreshToken;
+    }
+  } catch {
+    // Non-fatal — tokens will be loaded lazily on first request
+  }
+}
+
 type TokenCache = {
   access_token: string;
   expires_in: number;
@@ -247,15 +266,15 @@ type SumUpTransaction = {
  *
  * Strategy:
  *  1. Match by client_transaction_id === clientId (exact match)
- *  2. Fallback: match a SUCCESSFUL/FAILED transaction with the right amount
- *     that appeared after the payment was initiated (within 15 min window).
+ *  2. Fallback: find the most recent SUCCESSFUL/FAILED POS terminal transaction
+ *     with the matching amount — no time window (avoids server clock mismatch).
+ *     Caller is responsible for deduplication (checking transaction ID not already used).
  *
  * Returns null if no matching completed transaction found yet.
  */
 export async function getTransactionByClientId(
   clientId: string,
   amountEur?: number,
-  initiatedAt?: Date,
 ): Promise<{
   status: "SUCCESSFUL" | "FAILED" | "CANCELLED" | "PENDING" | string;
   transactionId?: string;
@@ -263,10 +282,11 @@ export async function getTransactionByClientId(
   currency?: string;
   raw?: unknown;
 } | null> {
-  // Collect tokens to try in order: client_credentials first, then user token
+  // Collect tokens to try in order: user token first (required for /me/transactions),
+  // then client_credentials (usually won't work for this endpoint but try anyway)
   const tokensToTry: string[] = [];
-  try { tokensToTry.push(await getSumUpToken()); } catch { /* ignore */ }
   try { tokensToTry.push(await getUserToken()); } catch { /* ignore */ }
+  try { tokensToTry.push(await getSumUpToken()); } catch { /* ignore */ }
 
   if (tokensToTry.length === 0) return null;
 
@@ -302,21 +322,18 @@ export async function getTransactionByClientId(
     return { status: byId.status, transactionId: byId.id, amount: byId.amount, currency: byId.currency, raw: byId };
   }
 
-  // ── Strategy 2: amount + time window match ──
-  // Find a completed transaction with the right amount in the last 15 min
-  if (amountEur !== undefined && initiatedAt !== undefined) {
-    const windowMs = 15 * 60 * 1000; // 15 minutes
-    const since = initiatedAt.getTime();
-    const until = since + windowMs;
-
+  // ── Strategy 2: most recent completed POS terminal transaction with matching amount ──
+  // Items are ordered most-recent-first by the API.
+  // No time-window filter: avoids false negatives when server clock differs from SumUp's clock.
+  // The caller deduplicates by checking sumup_transaction_id uniqueness in the DB.
+  if (amountEur !== undefined) {
     const byAmount = items.find((t) => {
-      if (!t.timestamp) return false;
-      const txTime = new Date(t.timestamp).getTime();
-      if (txTime < since || txTime > until) return false;
+      // Must be a terminal (POS) payment — not an online/ecom payment
+      if (t.payment_type && t.payment_type !== "POS") return false;
       // Match amount within 1 cent tolerance
       const txAmount = typeof t.amount === "number" ? t.amount : parseFloat(String(t.amount));
       if (Math.abs(txAmount - amountEur) > 0.01) return false;
-      // Only consider completed states (not pending)
+      // Only completed states
       const s = t.status?.toUpperCase();
       return s === "SUCCESSFUL" || s === "FAILED" || s === "CANCELLED";
     });
