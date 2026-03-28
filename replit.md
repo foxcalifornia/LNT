@@ -104,6 +104,33 @@ artifacts-monorepo/
 - `DELETE /api/produits/:id` — supprimer un produit
 - `POST /api/ventes` — enregistrer une vente (soustrait le stock)
 
+## Production Architecture (lntparis.replit.app)
+
+### Routing en production
+Tout le trafic externe (`lntparis.replit.app`) passe par `serve.js` (port 18115) qui est un **TCP forwarder** vers Express (port 8080).
+
+```
+Client → Replit CDN → serve.js:18115 (TCP forwarder) → Express:8080
+```
+
+Express (port 8080) gère **tout** :
+- Routes API `/api/*`
+- OAuth SumUp : `/auth/sumup`, `/callback`, `/api/auth/sumup`, `/api/callback`
+- Landing page Expo Go (`/` sans header expo-platform)
+- Manifests Expo Go (`/` ou `/manifest` avec header `expo-platform: ios/android`)
+- Fichiers statiques du build mobile (`/[timestamp]/_expo/static/js/...`)
+
+### Rebuild du build mobile pour la production
+```bash
+# Depuis la racine du workspace
+cd artifacts/mobile && REPLIT_INTERNAL_APP_DOMAIN=lntparis.replit.app node scripts/build.js
+```
+
+### Rebuild du dist Express
+```bash
+cd artifacts/api-server && node build.mjs
+```
+
 ## Password
 
 Le mot de passe pour accéder à la caisse et à l'inventaire est : **1234**
