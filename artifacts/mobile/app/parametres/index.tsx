@@ -340,7 +340,7 @@ function SectionPaiements({
       />
       <InfoRow
         label="Terminal ID"
-        value="rdr_1NSYDFW7HZ8YN8F6P4TK2MZQ4W"
+        value="200101010081"
         valueColor={COLORS.textSecondary}
       />
       <View style={styles.divider} />
