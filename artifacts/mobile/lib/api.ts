@@ -227,7 +227,8 @@ export const api = {
       ),
     getStatus: (saleReference: string) =>
       request<{ status: "PENDING" | "PAID" | "FAILED" | "CANCELLED"; saleReference: string }>(
-        `/payments/status/${encodeURIComponent(saleReference)}`
+        `/payments/status/${encodeURIComponent(saleReference)}`,
+        { cache: "no-store" }
       ),
     confirm: (data: {
       saleReference: string;

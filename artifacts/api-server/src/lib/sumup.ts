@@ -166,11 +166,20 @@ type SumUpTransaction = {
 };
 
 /**
- * Polls the user's transaction history to find a terminal payment
- * by its client_transaction_id (= the checkout id we sent as client_id).
- * Returns null if not found yet (still PENDING on the terminal).
+ * Polls the user's transaction history to find a terminal payment.
+ *
+ * Strategy:
+ *  1. Match by client_transaction_id === clientId (exact match)
+ *  2. Fallback: match a SUCCESSFUL/FAILED transaction with the right amount
+ *     that appeared after the payment was initiated (within 15 min window).
+ *
+ * Returns null if no matching completed transaction found yet.
  */
-export async function getTransactionByClientId(clientId: string): Promise<{
+export async function getTransactionByClientId(
+  clientId: string,
+  amountEur?: number,
+  initiatedAt?: Date,
+): Promise<{
   status: "SUCCESSFUL" | "FAILED" | "CANCELLED" | "PENDING" | string;
   transactionId?: string;
   amount?: number;
@@ -184,30 +193,58 @@ export async function getTransactionByClientId(clientId: string): Promise<{
     return null;
   }
 
-  const res = await fetch(`${SUMUP_BASE}/v0.1/me/transactions/history?limit=20&order=created_at.desc`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  // Fetch last 20 transactions, newest first
+  const res = await fetch(
+    `${SUMUP_BASE}/v0.1/me/transactions/history?limit=20&order=created_at.desc`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
 
   if (!res.ok) {
     if (res.status === 401) {
       process.env["SUMUP_USER_TOKEN"] = "";
     }
-    return null;
+    throw new Error(`SumUp transactions history error ${res.status}: ${await res.text()}`);
   }
 
   const data = await res.json() as { items?: SumUpTransaction[] };
   const items = data.items ?? [];
 
-  const found = items.find((t) => t.client_transaction_id === clientId);
-  if (!found) return null;
+  // ── Strategy 1: exact client_transaction_id match ──
+  const byId = items.find(
+    (t) => t.client_transaction_id === clientId ||
+           // SumUp may truncate to 36 chars
+           (clientId.length > 36 && t.client_transaction_id === clientId.slice(0, 36))
+  );
+  if (byId) {
+    return { status: byId.status, transactionId: byId.id, amount: byId.amount, currency: byId.currency, raw: byId };
+  }
 
-  return {
-    status: found.status,
-    transactionId: found.id,
-    amount: found.amount,
-    currency: found.currency,
-    raw: found,
-  };
+  // ── Strategy 2: amount + time window match ──
+  // Find a completed transaction with the right amount in the last 15 min
+  if (amountEur !== undefined && initiatedAt !== undefined) {
+    const windowMs = 15 * 60 * 1000; // 15 minutes
+    const since = initiatedAt.getTime();
+    const until = since + windowMs;
+
+    const byAmount = items.find((t) => {
+      if (!t.timestamp) return false;
+      const txTime = new Date(t.timestamp).getTime();
+      if (txTime < since || txTime > until) return false;
+      // Match amount within 1 cent tolerance
+      const txAmount = typeof t.amount === "number" ? t.amount : parseFloat(String(t.amount));
+      if (Math.abs(txAmount - amountEur) > 0.01) return false;
+      // Only consider completed states (not pending)
+      const s = t.status?.toUpperCase();
+      return s === "SUCCESSFUL" || s === "FAILED" || s === "CANCELLED";
+    });
+
+    if (byAmount) {
+      return { status: byAmount.status, transactionId: byAmount.id, amount: byAmount.amount, currency: byAmount.currency, raw: byAmount };
+    }
+  }
+
+  // Nothing found yet
+  return null;
 }
 
 export async function getSumUpCheckoutStatus(checkoutId: string): Promise<{

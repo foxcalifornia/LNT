@@ -100,6 +100,10 @@ router.post("/create", async (req, res) => {
 });
 
 router.get("/status/:saleReference", async (req, res) => {
+  // Disable ETag/caching so mobile always gets fresh status (not HTTP 304)
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+
   try {
     const { saleReference } = req.params;
 
@@ -119,7 +123,7 @@ router.get("/status/:saleReference", async (req, res) => {
       return;
     }
 
-    // Already known as PAID in DB (will be confirmed on next call)
+    // Already known as PAID in DB
     if (record.statut === "PAID") {
       res.json({ status: "PAID", saleReference });
       return;
@@ -130,17 +134,23 @@ router.get("/status/:saleReference", async (req, res) => {
       return;
     }
 
-    // ─── Primary: poll transaction history by client_transaction_id ───
-    // The terminal endpoint sends client_id = checkoutId, which appears
-    // as client_transaction_id in the transaction history.
     let dbStatut: string = record.statut ?? "PENDING";
     let transactionId: string | undefined;
 
+    // ─── Primary: poll transaction history ───
+    // We search by client_transaction_id (= checkout.id we sent as client_id)
+    // AND by recent amount match as fallback within the lookup function.
     try {
-      const txn = await getTransactionByClientId(record.sumupCheckoutId);
+      const txn = await getTransactionByClientId(
+        record.sumupCheckoutId,
+        record.montantCentimes / 100,
+        record.createdAt ?? new Date(Date.now() - 10 * 60 * 1000),
+      );
+
       if (txn) {
         const s = txn.status.toUpperCase();
-        // SumUp terminal statuses: SUCCESSFUL, FAILED, CANCELLED, PENDING, REFUNDED
+        req.log.info({ saleReference, txnStatus: s, txnId: txn.transactionId }, "Transaction found in SumUp history");
+
         if (s === "SUCCESSFUL") {
           dbStatut = "PAID";
           transactionId = txn.transactionId;
@@ -148,7 +158,6 @@ router.get("/status/:saleReference", async (req, res) => {
           dbStatut = "FAILED";
           transactionId = txn.transactionId;
         }
-        // else still PENDING → keep as is
 
         await logPayment({
           saleReference,
@@ -156,16 +165,19 @@ router.get("/status/:saleReference", async (req, res) => {
           responsePayload: { txnStatus: txn.status, transactionId: txn.transactionId },
           statut: dbStatut,
         });
+      } else {
+        req.log.info({ saleReference, checkoutId: record.sumupCheckoutId }, "No matching transaction in SumUp history yet");
       }
     } catch (txnErr) {
-      req.log.warn({ err: txnErr }, "getTransactionByClientId failed, falling back to checkout API");
+      req.log.warn({ err: txnErr }, "getTransactionByClientId failed");
     }
 
-    // ─── Fallback: poll checkout API (works for online payments) ───
+    // ─── Fallback: checkout API ───
     if (dbStatut === "PENDING") {
       try {
         const checkoutStatus = await getSumUpCheckoutStatus(record.sumupCheckoutId);
         const normalized = checkoutStatus.status.toUpperCase();
+        req.log.info({ saleReference, checkoutStatus: normalized }, "Checkout API status");
         if (normalized === "PAID") {
           dbStatut = "PAID";
           transactionId = checkoutStatus.transaction_id;
@@ -179,7 +191,7 @@ router.get("/status/:saleReference", async (req, res) => {
           statut: dbStatut,
         });
       } catch {
-        // Checkout API may not have this terminal payment — that's expected
+        // Expected: terminal payments don't appear in checkout API
       }
     }
 
