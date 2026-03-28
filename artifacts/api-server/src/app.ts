@@ -33,8 +33,10 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api", router);
 
 // ── Initiate SumUp OAuth with full scopes (including transactions.history) ──
-app.get("/auth/sumup", (req: Request, res: Response) => {
+// Available at BOTH /auth/sumup and /api/auth/sumup (proxy routes /api/* to this server)
+const handleAuthSumup = (req: Request, res: Response) => {
   const CLIENT_ID = process.env["SUMUP_CLIENT_ID"] ?? "";
+  // Use /callback (already registered in SumUp developer portal)
   const REDIRECT_URI = "https://lntparis.replit.app/callback";
   const scope = "payments transactions.history readers.read readers.write";
 
@@ -45,9 +47,10 @@ app.get("/auth/sumup", (req: Request, res: Response) => {
   url.searchParams.set("scope", scope);
 
   res.redirect(url.toString());
-});
+};
+app.get("/auth/sumup", handleAuthSumup);
 
-app.get("/callback", async (req: Request, res: Response) => {
+const handleCallback = async (req: Request, res: Response) => {
   const { code, error, error_description } = req.query as Record<string, string>;
 
   if (error) {
@@ -182,6 +185,12 @@ app.get("/callback", async (req: Request, res: Response) => {
       </body></html>
     `);
   }
-});
+};
+
+// Register callback at BOTH paths (old SumUp app used /callback, new uses /api/callback)
+app.get("/callback", handleCallback);
+app.get("/api/callback", handleCallback);
+// Register auth/sumup at /api/auth/sumup (proxy routes /api/* to this server)
+app.get("/api/auth/sumup", handleAuthSumup);
 
 export default app;

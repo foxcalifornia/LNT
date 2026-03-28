@@ -337,7 +337,7 @@ function SectionPaiements({
         {
           text: "Continuer",
           onPress: () => {
-            Linking.openURL("https://lntparis.replit.app/auth/sumup");
+            Linking.openURL("https://lntparis.replit.app/api/auth/sumup");
           },
         },
       ],
