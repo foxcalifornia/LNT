@@ -25,6 +25,7 @@ import { useAuth } from "@/context/AuthContext";
 const COLORS = Colors.light;
 
 type CaisseState = "checking" | "closed_hours" | "need_open" | "active" | "admin_view";
+type AdminOverride = false | "pending" | "active";
 
 function getTodayFr() {
   return new Date().toLocaleDateString("fr-FR");
@@ -57,6 +58,8 @@ export default function CaisseScreen() {
   const [showVente, setShowVente] = useState(false);
   const [showPanier, setShowPanier] = useState(false);
   const [openingLoading, setOpeningLoading] = useState(false);
+  const [adminOverride, setAdminOverride] = useState<AdminOverride>(false);
+  const adminOverrideRef = useRef<AdminOverride>(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data: collections = [], refetch: refetchCollections } = useQuery({
@@ -96,7 +99,7 @@ export default function CaisseScreen() {
     checkTodaySession();
 
     intervalRef.current = setInterval(() => {
-      if (!isCaisseHours()) {
+      if (!isCaisseHours() && adminOverrideRef.current !== "active") {
         setCaisseState((prev) => {
           if (prev === "active") {
             setCurrentSession(null);
@@ -150,7 +153,25 @@ export default function CaisseScreen() {
     return await Promise.race([fetchLocation(), globalTimeout]);
   };
 
-  const openCaisse = async () => {
+  const openCaisse = async (forceOutsideHours = false) => {
+    if (forceOutsideHours && !isCaisseHours()) {
+      Alert.alert(
+        "Ouverture hors horaires",
+        "Vous êtes sur le point d'ouvrir la caisse en dehors des horaires habituels (10h–20h). Confirmez-vous ?",
+        [
+          { text: "Annuler", style: "cancel" },
+          {
+            text: "Ouvrir quand même",
+            onPress: () => _doOpenCaisse(true),
+          },
+        ]
+      );
+      return;
+    }
+    await _doOpenCaisse(false);
+  };
+
+  const _doOpenCaisse = async (isOverride: boolean) => {
     setOpeningLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
@@ -163,6 +184,10 @@ export default function CaisseScreen() {
 
       const session = await api.caisse.createSession({ date, heure, localisation });
       setCurrentSession(session);
+      if (isOverride) {
+        adminOverrideRef.current = "active";
+        setAdminOverride("active");
+      }
       setCaisseState("active");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
@@ -227,6 +252,8 @@ export default function CaisseScreen() {
           text: "Fermer",
           style: "destructive",
           onPress: () => {
+            adminOverrideRef.current = false;
+            setAdminOverride(false);
             setCurrentSession(null);
             setCart([]);
             if (isCaisseHours()) {
@@ -273,6 +300,8 @@ export default function CaisseScreen() {
         <AdminConsultView
           session={currentSession}
           onOpen={openCaisse}
+          onOpenOutsideHours={() => openCaisse(true)}
+          openingLoading={openingLoading}
           onShowInventaire={() => router.push("/caisse/inventaire")}
           onShowVentesJour={() => router.push("/caisse/ventes-jour")}
         />
@@ -408,14 +437,19 @@ function ClosedView({
 function AdminConsultView({
   session,
   onOpen,
+  onOpenOutsideHours,
+  openingLoading,
   onShowInventaire,
   onShowVentesJour,
 }: {
   session: Session | null;
   onOpen: () => void;
+  onOpenOutsideHours: () => void;
+  openingLoading: boolean;
   onShowInventaire: () => void;
   onShowVentesJour: () => void;
 }) {
+  const isInHours = isCaisseHours();
   const { data: ventesJour } = useQuery({
     queryKey: ["ventesJour"],
     queryFn: api.caisse.getVentesJour,
@@ -493,11 +527,44 @@ function AdminConsultView({
         </Pressable>
       </View>
 
-      {isCaisseHours() && (
-        <Pressable style={styles.adminOpenBtn} onPress={onOpen}>
-          <Feather name="unlock" size={18} color="#fff" />
-          <Text style={styles.adminOpenBtnText}>Ouvrir la Caisse</Text>
+      {isInHours ? (
+        <Pressable
+          style={[styles.adminOpenBtn, openingLoading && { opacity: 0.6 }]}
+          onPress={onOpen}
+          disabled={openingLoading}
+        >
+          {openingLoading ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <>
+              <Feather name="unlock" size={18} color="#fff" />
+              <Text style={styles.adminOpenBtnText}>Ouvrir la Caisse</Text>
+            </>
+          )}
         </Pressable>
+      ) : (
+        <View style={styles.adminOutsideHoursBlock}>
+          <View style={styles.adminOutsideHoursWarning}>
+            <Feather name="alert-triangle" size={14} color="#92400E" />
+            <Text style={styles.adminOutsideHoursWarningText}>
+              En dehors des horaires habituels
+            </Text>
+          </View>
+          <Pressable
+            style={[styles.adminOpenOutsideBtn, openingLoading && { opacity: 0.6 }]}
+            onPress={onOpenOutsideHours}
+            disabled={openingLoading}
+          >
+            {openingLoading ? (
+              <ActivityIndicator color="#92400E" size="small" />
+            ) : (
+              <>
+                <Feather name="unlock" size={18} color="#92400E" />
+                <Text style={styles.adminOpenOutsideBtnText}>Ouvrir la caisse quand même</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
       )}
     </ScrollView>
   );
@@ -1497,5 +1564,42 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_700Bold",
     color: "#fff",
+  },
+  adminOutsideHoursBlock: {
+    gap: 10,
+    marginTop: 4,
+  },
+  adminOutsideHoursWarning: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#FEF3C7",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  adminOutsideHoursWarningText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: "#92400E",
+    flex: 1,
+  },
+  adminOpenOutsideBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: "#FEF3C7",
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: "#F59E0B",
+  },
+  adminOpenOutsideBtnText: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: "#92400E",
   },
 });
