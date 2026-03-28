@@ -141,7 +141,16 @@ const server = http.createServer((req, res) => {
     pathname = pathname.slice(basePath.length) || "/";
   }
 
+  console.log(`[serve] ${req.method} ${req.url} → pathname="${pathname}" basePath="${basePath}"`);
+
+  if (pathname === "/api/ping") {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("PONG-v2");
+    return;
+  }
+
   if (pathname.startsWith("/api/") || pathname === "/api") {
+    console.log(`[serve] proxying to API server port ${API_PORT}`);
     return proxyToApi(req, res, pathname);
   }
 
