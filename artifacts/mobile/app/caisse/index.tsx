@@ -211,57 +211,6 @@ export default function CaisseScreen() {
     queryClient.invalidateQueries({ queryKey: ["consommables"] });
   };
 
-  const handleCancelLastVente = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    const dernièreVente = queryClient.getQueryData<import("../../lib/api").VentesJour>(["ventesJour"])?.transactions?.[0];
-    const isCarte = dernièreVente?.typePaiement === "CARTE";
-    const confirmMsg = isCarte
-      ? "Cette action est irréversible. Les produits seront remis en stock et le montant sera remboursé sur la carte bancaire du client."
-      : "Cette action est irréversible. Les produits seront remis en stock et le total mis à jour.";
-
-    Alert.alert(
-      "Annuler la dernière vente ?",
-      confirmMsg,
-      [
-        { text: "Annuler", style: "cancel" },
-        {
-          text: "Confirmer l'annulation",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const result = await api.caisse.cancelLastVente();
-              await Promise.all([
-                refetchCollections(),
-                queryClient.refetchQueries({ queryKey: ["ventesJour"] }),
-              ]);
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-              if (isCarte) {
-                if (result.refund?.success) {
-                  Alert.alert(
-                    "Vente annulée",
-                    `Le remboursement SumUp a été traité avec succès.`,
-                  );
-                } else if (result.refund?.error) {
-                  Alert.alert(
-                    "Vente annulée — Remboursement manuel requis",
-                    `La vente a été annulée, mais le remboursement automatique a échoué :\n\n${result.refund.error}\n\nVeuillez effectuer le remboursement manuellement depuis l'application SumUp.`,
-                  );
-                }
-              }
-            } catch (err: any) {
-              Alert.alert(
-                "Erreur",
-                (err as Error)?.message ?? "Impossible d'annuler la vente"
-              );
-            }
-          },
-        },
-      ]
-    );
-  };
-
   const closeCaisse = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert(
@@ -340,7 +289,6 @@ export default function CaisseScreen() {
           onShowInventaire={() => router.push("/caisse/inventaire")}
           onShowVentesJour={() => router.push("/caisse/ventes-jour")}
           onShowPanier={() => setShowPanier(true)}
-          onCancelLastVente={handleCancelLastVente}
           insets={insets}
         />
       )}
@@ -600,7 +548,6 @@ type ActiveCaisseViewProps = {
   onShowInventaire: () => void;
   onShowVentesJour: () => void;
   onShowPanier: () => void;
-  onCancelLastVente: () => void;
   insets: { bottom: number };
 };
 
@@ -624,7 +571,6 @@ function ActiveCaisseView({
   onShowInventaire,
   onShowVentesJour,
   onShowPanier,
-  onCancelLastVente,
   insets,
 }: ActiveCaisseViewProps) {
   const cartCount = cartTotalItems(cart);
@@ -733,72 +679,18 @@ function ActiveCaisseView({
           </View>
         </View>
 
-        {dernièreVente && (
-          <View style={styles.derniereVenteCard}>
-            <View style={styles.derniereVenteHeader}>
-              <Feather name="clock" size={14} color={COLORS.textSecondary} />
-              <Text style={styles.derniereVenteTitle}>Dernière vente</Text>
-            </View>
-            <View style={styles.derniereVenteBody}>
-              <View style={styles.derniereVenteLeft}>
-                <Text style={styles.derniereVenteHeure}>{dernièreVente.heure}</Text>
-                {dernièreVente.articles.slice(0, 2).map((a, i) => (
-                  <Text key={i} style={styles.derniereVenteArticle} numberOfLines={1}>
-                    {a.quantiteVendue > 1 ? `${a.quantiteVendue}× ` : ""}{a.collectionNom} – {a.couleur}
-                  </Text>
-                ))}
-                {dernièreVente.articles.length > 2 && (
-                  <Text style={styles.derniereVenteArticle}>
-                    +{dernièreVente.articles.length - 2} autre{dernièreVente.articles.length - 2 > 1 ? "s" : ""}
-                  </Text>
-                )}
-              </View>
-              <View style={styles.derniereVenteRight}>
-                <Text style={styles.derniereVenteMontant}>{formatPrix(dernièreVente.montantCentimes)}</Text>
-                <View style={[
-                  styles.derniereVenteMode,
-                  { backgroundColor: dernièreVente.typePaiement === "CASH" ? COLORS.cash + "18" : COLORS.card_payment + "18" }
-                ]}>
-                  <Feather
-                    name={dernièreVente.typePaiement === "CASH" ? "dollar-sign" : "credit-card"}
-                    size={12}
-                    color={dernièreVente.typePaiement === "CASH" ? COLORS.cash : COLORS.card_payment}
-                  />
-                  <Text style={[
-                    styles.derniereVenteModeText,
-                    { color: dernièreVente.typePaiement === "CASH" ? COLORS.cash : COLORS.card_payment }
-                  ]}>
-                    {dernièreVente.typePaiement === "CASH" ? "Cash" : "Carte"}
-                  </Text>
-                </View>
-                {dernièreVente.typePaiement === "CARTE" && dernièreVente.sumupTransactionId && (
-                  <Text style={styles.txIdText} numberOfLines={1}>
-                    ID: {dernièreVente.sumupTransactionId.slice(-8).toUpperCase()}
-                  </Text>
-                )}
-                {dernièreVente.refunded && (
-                  <View style={styles.refundedBadge}>
-                    <Text style={styles.refundedBadgeText}>Remboursé</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          </View>
-        )}
-
-        {nbVentes > 0 && (
-          <View style={{ paddingHorizontal: 20, marginTop: 4 }}>
-            <Pressable style={styles.cancelBtn} onPress={onCancelLastVente}>
-              <Feather name="rotate-ccw" size={15} color={COLORS.danger} />
-              <Text style={styles.cancelBtnText}>Annuler la dernière vente</Text>
-            </Pressable>
-          </View>
-        )}
+        <StockAlertsPanel onGoToInventaire={onShowInventaire} />
 
         <View style={styles.txJourSection}>
           <View style={styles.txJourHeader}>
-            <Feather name="list" size={14} color={COLORS.textSecondary} />
-            <Text style={styles.txJourTitle}>Transactions du jour</Text>
+            <View style={styles.txJourHeaderLeft}>
+              <Feather name="list" size={14} color={COLORS.textSecondary} />
+              <Text style={styles.txJourTitle}>Transactions du jour</Text>
+            </View>
+            <Pressable style={styles.txJourVoirTout} onPress={onShowVentesJour}>
+              <Text style={styles.txJourVoirToutText}>Voir tout</Text>
+              <Feather name="chevron-right" size={13} color={COLORS.accent} />
+            </Pressable>
           </View>
 
           {!ventesJour || ventesJour.transactions.length === 0 ? (
@@ -806,12 +698,16 @@ function ActiveCaisseView({
               <Text style={styles.txJourEmptyText}>Aucune vente aujourd'hui</Text>
             </View>
           ) : (
-            ventesJour.transactions.map((t, i) => {
+            ventesJour.transactions.slice(0, 8).map((t, i) => {
               const isCash = t.typePaiement === "CASH";
               const isCancelled = t.cancelled ?? false;
               const color = isCancelled ? COLORS.textSecondary : (isCash ? COLORS.cash : COLORS.card_payment);
               return (
-                <View key={t.groupKey ?? i} style={[styles.txJourRow, isCancelled && { opacity: 0.55 }]}>
+                <Pressable
+                  key={t.groupKey ?? i}
+                  style={({ pressed }) => [styles.txJourRow, isCancelled && { opacity: 0.55 }, pressed && { backgroundColor: COLORS.border + "40" }]}
+                  onPress={() => router.push({ pathname: "/caisse/transaction-detail", params: { venteId: t.firstVenteId } })}
+                >
                   <Text style={styles.txJourHeure}>{t.heure}</Text>
                   <Text style={styles.txJourSep}>—</Text>
                   <Text style={[styles.txJourMontant, { color, textDecorationLine: isCancelled ? "line-through" : "none" }]}>
@@ -837,9 +733,17 @@ function ActiveCaisseView({
                       <Text style={styles.txJourRefundedText}>RMB</Text>
                     </View>
                   ) : null}
-                </View>
+                  <Feather name="chevron-right" size={12} color={COLORS.border} style={{ marginLeft: "auto" }} />
+                </Pressable>
               );
             })
+          )}
+          {ventesJour && ventesJour.transactions.length > 8 && (
+            <Pressable style={styles.txJourMoreBtn} onPress={onShowVentesJour}>
+              <Text style={styles.txJourMoreText}>
+                +{ventesJour.transactions.length - 8} transaction{ventesJour.transactions.length - 8 > 1 ? "s" : ""} — Voir tout
+              </Text>
+            </Pressable>
           )}
         </View>
       </ScrollView>
@@ -874,6 +778,51 @@ function ActiveCaisseView({
         </Pressable>
       </View>
     </View>
+  );
+}
+
+function StockAlertsPanel({ onGoToInventaire }: { onGoToInventaire: () => void }) {
+  const { data: collections } = useQuery({
+    queryKey: ["collections"],
+    queryFn: api.inventory.getCollections,
+    refetchInterval: 60000,
+  });
+
+  const lowStockItems = (collections ?? [])
+    .flatMap((c) =>
+      c.produits
+        .filter((p) => p.stockMinimum > 0 && p.quantite <= p.stockMinimum)
+        .map((p) => ({ collection: c.nom, couleur: p.couleur, quantite: p.quantite, stockMinimum: p.stockMinimum })),
+    )
+    .slice(0, 4);
+
+  if (lowStockItems.length === 0) return null;
+
+  return (
+    <Pressable style={styles.alertPanel} onPress={onGoToInventaire}>
+      <View style={styles.alertHeader}>
+        <View style={styles.alertIconWrap}>
+          <Feather name="alert-triangle" size={14} color={COLORS.danger} />
+        </View>
+        <Text style={styles.alertTitle}>
+          {lowStockItems.length} article{lowStockItems.length > 1 ? "s" : ""} en stock faible
+        </Text>
+        <Feather name="chevron-right" size={14} color={COLORS.danger} style={{ marginLeft: "auto" }} />
+      </View>
+      <View style={styles.alertItems}>
+        {lowStockItems.map((item, i) => (
+          <View key={i} style={styles.alertItem}>
+            <View style={styles.alertItemDot} />
+            <Text style={styles.alertItemText} numberOfLines={1}>
+              {item.collection} – {item.couleur}
+            </Text>
+            <Text style={styles.alertItemStock}>
+              {item.quantite} / {item.stockMinimum}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </Pressable>
   );
 }
 
@@ -1384,6 +1333,70 @@ const styles = StyleSheet.create({
     color: COLORS.danger,
   },
 
+  alertPanel: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    backgroundColor: COLORS.danger + "0D",
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: COLORS.danger + "40",
+    padding: 14,
+    gap: 10,
+  },
+  alertHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  alertIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: COLORS.danger + "1A",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  alertTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.danger,
+    flex: 1,
+  },
+  alertItems: {
+    gap: 6,
+    paddingTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.danger + "25",
+  },
+  alertItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  alertItemDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.danger,
+    flexShrink: 0,
+  },
+  alertItemText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.danger,
+    textTransform: "capitalize",
+  },
+  alertItemStock: {
+    fontSize: 11,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.danger,
+    backgroundColor: COLORS.danger + "15",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+
   txJourSection: {
     marginHorizontal: 20,
     marginTop: 20,
@@ -1392,8 +1405,13 @@ const styles = StyleSheet.create({
   txJourHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    justifyContent: "space-between",
     marginBottom: 12,
+  },
+  txJourHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   txJourTitle: {
     fontSize: 11,
@@ -1401,6 +1419,26 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textTransform: "uppercase",
     letterSpacing: 1,
+  },
+  txJourVoirTout: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  txJourVoirToutText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.accent,
+  },
+  txJourMoreBtn: {
+    alignItems: "center",
+    paddingVertical: 12,
+    marginTop: 2,
+  },
+  txJourMoreText: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.accent,
   },
   txJourEmpty: {
     backgroundColor: COLORS.card,
