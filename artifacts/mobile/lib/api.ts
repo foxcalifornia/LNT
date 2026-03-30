@@ -24,6 +24,10 @@ export type Session = {
   heure: string;
   localisation: string | null;
   typePaiement: string | null;
+  heureFermeture: string | null;
+  fondCaisseOuverture: number | null;
+  fondCaisseFermeture: number | null;
+  commentaireFermeture: string | null;
   createdAt: string;
 };
 
@@ -55,6 +59,10 @@ export type Vente = {
   quantiteVendue: number;
   typePaiement: string;
   montantCentimes: number;
+  remiseCentimes: number;
+  remiseType: string | null;
+  commentaire: string | null;
+  groupKey: string | null;
   createdAt: string;
 };
 
@@ -86,6 +94,33 @@ export type WeekdayReport = {
   dayIndex: number;
   dayName: string;
   topProduits: WeekdayProduit[];
+};
+
+export type HebdoReport = {
+  weekKey: string;
+  label: string;
+  totalCentimes: number;
+  cashCentimes: number;
+  carteCentimes: number;
+  articles: number;
+};
+
+export type MensuelReport = {
+  monthKey: string;
+  label: string;
+  totalCentimes: number;
+  cashCentimes: number;
+  carteCentimes: number;
+  articles: number;
+  evolution: number | null;
+};
+
+export type TopProduit = {
+  produitId: number;
+  collection: string;
+  couleur: string;
+  quantite: number;
+  montantCentimes: number;
 };
 
 export type VenteTransaction = {
@@ -133,15 +168,24 @@ export type Boite = {
 
 export type MouvementStock = {
   id: number;
-  typeMouvement: "vente" | "reappro" | "annulation";
+  produitId: number;
+  typeMouvement: "vente" | "reappro" | "annulation" | "transfert" | "ajustement";
   quantite: number;
   stockBoutiqueAvant: number;
   stockBoutiqueApres: number;
   stockReserveAvant: number;
   stockReserveApres: number;
+  commentaire: string | null;
   createdAt: string;
   couleur: string;
   collectionNom: string;
+};
+
+export type VenteOpts = {
+  remiseCentimes?: number;
+  remiseType?: string;
+  commentaire?: string;
+  groupKey?: string;
 };
 
 export function formatPrix(centimes: number): string {
@@ -160,6 +204,11 @@ export const api = {
     createSession: (data: { date: string; heure: string; localisation?: string | null; typePaiement?: string | null }) =>
       request<Session>("/caisse/sessions", {
         method: "POST",
+        body: JSON.stringify(data),
+      }),
+    fermerSession: (id: number, data: { fondCaisseFermeture?: number; commentaireFermeture?: string; heureFermeture?: string }) =>
+      request<Session>(`/caisse/sessions/${id}/fermeture`, {
+        method: "PUT",
         body: JSON.stringify(data),
       }),
     getVentesJour: () => request<VentesJour>("/caisse/today"),
@@ -207,12 +256,17 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({ nouvelleQuantite }),
       }),
+    transfertStock: (id: number, data: { quantite: number; direction: "boutique_to_reserve" | "reserve_to_boutique"; commentaire?: string }) =>
+      request<Produit>(`/produits/${id}/transfert`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
     createVente: (data: { produitId: number; quantiteVendue: number; typePaiement: string }) =>
       request<Vente>("/ventes", {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    batchVente: (data: { items: { produitId: number; quantite: number }[]; typePaiement: "CASH" }) =>
+    batchVente: (data: { items: { produitId: number; quantite: number }[]; typePaiement: "CASH" } & VenteOpts) =>
       request<{ message: string; totalArticles: number }>("/ventes/batch", {
         method: "POST",
         body: JSON.stringify(data),
@@ -236,12 +290,24 @@ export const api = {
       }),
     deleteBoite: (id: number) =>
       request<{ message: string }>(`/boites/${id}`, { method: "DELETE" }),
-    getMouvements: () => request<MouvementStock[]>("/mouvements"),
+    getMouvements: (params?: { produitId?: number; limit?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.produitId) qs.set("produitId", String(params.produitId));
+      if (params?.limit) qs.set("limit", String(params.limit));
+      const q = qs.toString();
+      return request<MouvementStock[]>(`/stock/mouvements${q ? `?${q}` : ""}`);
+    },
   },
   reporting: {
     getDaily: () => request<JourReport[]>("/reporting/daily"),
     getByWeekday: (days?: number) =>
       request<WeekdayReport[]>(`/reporting/by-weekday${days ? `?days=${days}` : ""}`),
+    getHebdo: (weeks?: number) =>
+      request<HebdoReport[]>(`/reporting/hebdo${weeks ? `?weeks=${weeks}` : ""}`),
+    getMensuel: (months?: number) =>
+      request<MensuelReport[]>(`/reporting/mensuel${months ? `?months=${months}` : ""}`),
+    getTopProduits: (days?: number) =>
+      request<TopProduit[]>(`/reporting/top-produits${days ? `?days=${days}` : ""}`),
   },
   payments: {
     create: (data: {
@@ -262,7 +328,7 @@ export const api = {
       saleReference: string;
       items: { produitId: number; quantite: number }[];
       forceConfirm?: boolean;
-    }) =>
+    } & VenteOpts) =>
       request<{ message: string; saleReference: string }>(
         "/payments/confirm",
         { method: "POST", body: JSON.stringify(data) }

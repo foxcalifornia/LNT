@@ -439,14 +439,17 @@ type ProduitStockSheetProps = {
 };
 
 type SheetSection = "transfer" | "boutique" | "reserve" | "minimum" | "prix" | null;
+type TransferDirection = "reserve_to_boutique" | "boutique_to_reserve";
 
 function ProduitStockSheet({ visible, produit, collectionNom, onClose, onSuccess }: ProduitStockSheetProps) {
   const queryClient = useQueryClient();
   const [openSection, setOpenSection] = useState<SheetSection>(null);
   const [inputVal, setInputVal] = useState("");
+  const [transferDirection, setTransferDirection] = useState<TransferDirection>("reserve_to_boutique");
+  const [transferComment, setTransferComment] = useState("");
 
   useEffect(() => {
-    if (visible) { setOpenSection(null); setInputVal(""); }
+    if (visible) { setOpenSection(null); setInputVal(""); setTransferDirection("reserve_to_boutique"); setTransferComment(""); }
   }, [visible, produit?.id]);
 
   const onMutationSuccess = () => {
@@ -455,11 +458,13 @@ function ProduitStockSheet({ visible, produit, collectionNom, onClose, onSuccess
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setOpenSection(null);
     setInputVal("");
+    setTransferComment("");
     onSuccess();
   };
 
   const transferMutation = useMutation({
-    mutationFn: (qty: number) => api.inventory.reapprovisionnement(produit!.id, qty),
+    mutationFn: ({ qty, direction, commentaire }: { qty: number; direction: TransferDirection; commentaire?: string }) =>
+      api.inventory.transfertStock(produit!.id, { quantite: qty, direction, commentaire }),
     onSuccess: onMutationSuccess,
     onError: (err: any) => Alert.alert("Erreur", err.message),
   });
@@ -504,8 +509,9 @@ function ProduitStockSheet({ visible, produit, collectionNom, onClose, onSuccess
   };
 
   const handleTransfer = () => {
-    if (parsed <= 0 || parsed > produit.stockReserve) return;
-    transferMutation.mutate(parsed);
+    const maxQty = transferDirection === "reserve_to_boutique" ? produit.stockReserve : produit.quantite;
+    if (parsed <= 0 || parsed > maxQty) return;
+    transferMutation.mutate({ qty: parsed, direction: transferDirection, commentaire: transferComment || undefined });
   };
 
   const handleBoutique = () => {
@@ -593,46 +599,108 @@ function ProduitStockSheet({ visible, produit, collectionNom, onClose, onSuccess
           )}
 
           <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 4 }}>
+            {/* Transfert bidirectionnel boutique ↔ réserve */}
             <SheetActionRow
-              icon="arrow-up-circle"
-              label="Transférer réserve → boutique"
+              icon="repeat"
+              label="Transfert boutique ↔ réserve"
               color={COLORS.accent}
-              disabled={!canTransfer}
-              disabledHint={!canTransfer ? "Réserve vide" : undefined}
+              disabled={produit.stockReserve === 0 && produit.quantite === 0}
               open={openSection === "transfer"}
               onToggle={() => openSection === "transfer" ? setOpenSection(null) : openSect("transfer", "1")}
             >
-              <View style={styles.sheetInputRow}>
+              {/* Direction toggle */}
+              <View style={styles.transferDirRow}>
                 <Pressable
-                  style={[styles.qtyBtnLg, parsed <= 1 && styles.btnDisabled]}
-                  onPress={() => setInputVal(v => String(Math.max(1, parseInt(v) - 1)))}
-                  disabled={parsed <= 1}
+                  style={[styles.transferDirBtn, transferDirection === "reserve_to_boutique" && styles.transferDirBtnActive]}
+                  onPress={() => { setTransferDirection("reserve_to_boutique"); setInputVal("1"); }}
                 >
-                  <Feather name="minus" size={20} color={parsed <= 1 ? COLORS.textSecondary : COLORS.text} />
+                  <Feather name="arrow-up-circle" size={14} color={transferDirection === "reserve_to_boutique" ? "#fff" : COLORS.textSecondary} />
+                  <Text style={[styles.transferDirText, transferDirection === "reserve_to_boutique" && { color: "#fff" }]}>
+                    Réserve → Boutique
+                  </Text>
                 </Pressable>
-                <TextInput
-                  style={styles.qtyInputLg}
-                  value={inputVal}
-                  onChangeText={setInputVal}
-                  keyboardType="number-pad"
-                  textAlign="center"
-                  selectTextOnFocus
-                />
                 <Pressable
-                  style={[styles.qtyBtnLg, parsed >= produit.stockReserve && styles.btnDisabled]}
-                  onPress={() => setInputVal(v => String(Math.min(produit.stockReserve, parseInt(v) + 1)))}
-                  disabled={parsed >= produit.stockReserve}
+                  style={[styles.transferDirBtn, transferDirection === "boutique_to_reserve" && { backgroundColor: "#8B5CF6" }]}
+                  onPress={() => { setTransferDirection("boutique_to_reserve"); setInputVal("1"); }}
                 >
-                  <Feather name="plus" size={20} color={parsed >= produit.stockReserve ? COLORS.textSecondary : COLORS.text} />
+                  <Feather name="arrow-down-circle" size={14} color={transferDirection === "boutique_to_reserve" ? "#fff" : COLORS.textSecondary} />
+                  <Text style={[styles.transferDirText, transferDirection === "boutique_to_reserve" && { color: "#fff" }]}>
+                    Boutique → Réserve
+                  </Text>
                 </Pressable>
               </View>
-              <Text style={styles.sheetHint}>Réserve dispo : {produit.stockReserve} · Boutique après : {produit.quantite + Math.min(parsed, produit.stockReserve)}</Text>
+
+              {/* Qty stepper */}
+              {(() => {
+                const maxQty = transferDirection === "reserve_to_boutique" ? produit.stockReserve : produit.quantite;
+                const afterBoutique = transferDirection === "reserve_to_boutique"
+                  ? produit.quantite + Math.min(parsed, maxQty)
+                  : produit.quantite - Math.min(parsed, maxQty);
+                const afterReserve = transferDirection === "boutique_to_reserve"
+                  ? produit.stockReserve + Math.min(parsed, maxQty)
+                  : produit.stockReserve - Math.min(parsed, maxQty);
+                return (
+                  <>
+                    <View style={styles.sheetInputRow}>
+                      <Pressable
+                        style={[styles.qtyBtnLg, parsed <= 1 && styles.btnDisabled]}
+                        onPress={() => setInputVal(v => String(Math.max(1, parseInt(v) - 1)))}
+                        disabled={parsed <= 1}
+                      >
+                        <Feather name="minus" size={20} color={parsed <= 1 ? COLORS.textSecondary : COLORS.text} />
+                      </Pressable>
+                      <TextInput
+                        style={styles.qtyInputLg}
+                        value={inputVal}
+                        onChangeText={setInputVal}
+                        keyboardType="number-pad"
+                        textAlign="center"
+                        selectTextOnFocus
+                      />
+                      <Pressable
+                        style={[styles.qtyBtnLg, parsed >= maxQty && styles.btnDisabled]}
+                        onPress={() => setInputVal(v => String(Math.min(maxQty, parseInt(v) + 1)))}
+                        disabled={parsed >= maxQty}
+                      >
+                        <Feather name="plus" size={20} color={parsed >= maxQty ? COLORS.textSecondary : COLORS.text} />
+                      </Pressable>
+                    </View>
+                    <Text style={styles.sheetHint}>
+                      Boutique : {produit.quantite} → <Text style={{ color: COLORS.success, fontFamily: "Inter_600SemiBold" }}>{afterBoutique}</Text>
+                      {"  ·  "}
+                      Réserve : {produit.stockReserve} → <Text style={{ color: "#8B5CF6", fontFamily: "Inter_600SemiBold" }}>{afterReserve}</Text>
+                    </Text>
+                    {maxQty === 0 && (
+                      <Text style={[styles.sheetHint, { color: COLORS.danger }]}>
+                        {transferDirection === "reserve_to_boutique" ? "Réserve vide" : "Boutique vide"}
+                      </Text>
+                    )}
+                  </>
+                );
+              })()}
+
+              {/* Commentaire transfert */}
+              <TextInput
+                style={[styles.sheetTextInput, { marginTop: 8 }]}
+                value={transferComment}
+                onChangeText={setTransferComment}
+                placeholder="Commentaire (optionnel)"
+                placeholderTextColor={COLORS.textSecondary}
+              />
+
               <Pressable
-                style={[styles.sheetActionBtn, { backgroundColor: COLORS.accent }, (isPending || parsed <= 0 || parsed > produit.stockReserve) && styles.btnDisabled]}
+                style={[styles.sheetActionBtn, { backgroundColor: COLORS.accent }, (isPending || parsed <= 0 || parsed > (transferDirection === "reserve_to_boutique" ? produit.stockReserve : produit.quantite)) && styles.btnDisabled]}
                 onPress={handleTransfer}
-                disabled={isPending || parsed <= 0 || parsed > produit.stockReserve}
+                disabled={isPending || parsed <= 0 || parsed > (transferDirection === "reserve_to_boutique" ? produit.stockReserve : produit.quantite)}
               >
-                {transferMutation.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.sheetActionBtnText}>Transférer</Text>}
+                {transferMutation.isPending ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Feather name="repeat" size={15} color="#fff" />
+                    <Text style={styles.sheetActionBtnText}>Transférer</Text>
+                  </>
+                )}
               </Pressable>
             </SheetActionRow>
 
@@ -981,6 +1049,8 @@ function MouvementsView({ mouvements, isLoading, isRefetching, onRefresh }: {
     if (type === "vente") return COLORS.danger;
     if (type === "reappro") return "#8B5CF6";
     if (type === "annulation") return "#F59E0B";
+    if (type === "transfert_reserve_to_boutique") return COLORS.accent;
+    if (type === "transfert_boutique_to_reserve") return "#6366F1";
     return COLORS.textSecondary;
   };
 
@@ -988,6 +1058,8 @@ function MouvementsView({ mouvements, isLoading, isRefetching, onRefresh }: {
     if (type === "vente") return "shopping-cart";
     if (type === "reappro") return "arrow-up-circle";
     if (type === "annulation") return "rotate-ccw";
+    if (type === "transfert_reserve_to_boutique") return "arrow-up-circle";
+    if (type === "transfert_boutique_to_reserve") return "arrow-down-circle";
     return "activity";
   };
 
@@ -995,6 +1067,8 @@ function MouvementsView({ mouvements, isLoading, isRefetching, onRefresh }: {
     if (type === "vente") return "Vente";
     if (type === "reappro") return "Réappro.";
     if (type === "annulation") return "Annulation";
+    if (type === "transfert_reserve_to_boutique") return "Transfert → Boutique";
+    if (type === "transfert_boutique_to_reserve") return "Transfert → Réserve";
     return type;
   };
 
@@ -2264,5 +2338,37 @@ const styles = StyleSheet.create({
     backgroundColor: "#EDE9FE",
     borderWidth: 1, borderColor: "#C4B5FD",
     justifyContent: "center", alignItems: "center",
+  },
+  transferDirRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  transferDirBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+  },
+  transferDirBtnActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  transferDirText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.textSecondary,
+  },
+  sheetActionBtnRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
   },
 });

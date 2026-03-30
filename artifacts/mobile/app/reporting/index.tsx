@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -14,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 
 import Colors from "@/constants/colors";
-import { api, formatPrix, formatDateLabel, type JourReport, type Session, type CollectionWithProduits, type WeekdayReport } from "@/lib/api";
+import { api, formatPrix, formatDateLabel, type JourReport, type Session, type CollectionWithProduits, type WeekdayReport, type HebdoReport, type MensuelReport, type TopProduit } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/context/SettingsContext";
 
@@ -25,12 +26,18 @@ const GOLD = COLORS.accent;
 
 type Filter = "today" | "week" | "all";
 type WeekdayFilter = "7" | "30" | "90" | "all";
-type Tab = "resume" | "ouvertures" | "ventes" | "stock" | "reappro" | "habitudes";
+type HebdoFilter = "4" | "8" | "12";
+type MensuelFilter = "3" | "6" | "12";
+type TopFilter = "7" | "30" | "90";
+type Tab = "resume" | "ouvertures" | "ventes" | "stock" | "reappro" | "habitudes" | "hebdo" | "mensuel" | "top";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "resume", label: "Résumé", icon: "pie-chart" },
   { key: "ouvertures", label: "Ouvertures", icon: "unlock" },
   { key: "ventes", label: "Ventes", icon: "trending-up" },
+  { key: "hebdo", label: "Hebdo", icon: "bar-chart-2" },
+  { key: "mensuel", label: "Mensuel", icon: "bar-chart" },
+  { key: "top", label: "Top", icon: "award" },
   { key: "stock", label: "Stock", icon: "package" },
   { key: "reappro", label: "Réappro", icon: "alert-circle" },
   { key: "habitudes", label: "Habitudes", icon: "calendar" },
@@ -52,6 +59,9 @@ export default function ReportingScreen() {
   const [filter, setFilter] = useState<Filter>("all");
   const [weekdayFilter, setWeekdayFilter] = useState<WeekdayFilter>("30");
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const [hebdoFilter, setHebdoFilter] = useState<HebdoFilter>("8");
+  const [mensuelFilter, setMensuelFilter] = useState<MensuelFilter>("6");
+  const [topFilter, setTopFilter] = useState<TopFilter>("30");
 
   useEffect(() => {
     if (!isAdmin) {
@@ -78,6 +88,24 @@ export default function ReportingScreen() {
   const { data: weekdayData = [], isLoading: weekdayLoading } = useQuery({
     queryKey: ["reporting-by-weekday", weekdayFilter],
     queryFn: () => api.reporting.getByWeekday(weekdayDaysParam),
+  });
+
+  const { data: hebdoData = [], isLoading: hebdoLoading } = useQuery({
+    queryKey: ["reporting-hebdo", hebdoFilter],
+    queryFn: () => api.reporting.getHebdo(Number(hebdoFilter)),
+    enabled: tab === "hebdo",
+  });
+
+  const { data: mensuelData = [], isLoading: mensuelLoading } = useQuery({
+    queryKey: ["reporting-mensuel", mensuelFilter],
+    queryFn: () => api.reporting.getMensuel(Number(mensuelFilter)),
+    enabled: tab === "mensuel",
+  });
+
+  const { data: topData = [], isLoading: topLoading } = useQuery({
+    queryKey: ["reporting-top", topFilter],
+    queryFn: () => api.reporting.getTopProduits(Number(topFilter)),
+    enabled: tab === "top",
   });
 
   const today = new Date().toISOString().slice(0, 10);
@@ -107,6 +135,9 @@ export default function ReportingScreen() {
 
   const showFilter = tab === "resume" || tab === "ventes";
   const showWeekdayFilter = tab === "habitudes";
+  const showHebdoFilter = tab === "hebdo";
+  const showMensuelFilter = tab === "mensuel";
+  const showTopFilter = tab === "top";
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -152,6 +183,48 @@ export default function ReportingScreen() {
         </View>
       )}
 
+      {showHebdoFilter && (
+        <View style={styles.filterRow}>
+          {([["4", "4 sem."], ["8", "8 sem."], ["12", "12 sem."]] as [HebdoFilter, string][]).map(([f, label]) => (
+            <Pressable
+              key={f}
+              style={[styles.filterChip, hebdoFilter === f && styles.filterChipActive]}
+              onPress={() => { Haptics.selectionAsync(); setHebdoFilter(f); }}
+            >
+              <Text style={[styles.filterChipText, hebdoFilter === f && styles.filterChipTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {showMensuelFilter && (
+        <View style={styles.filterRow}>
+          {([["3", "3 mois"], ["6", "6 mois"], ["12", "12 mois"]] as [MensuelFilter, string][]).map(([f, label]) => (
+            <Pressable
+              key={f}
+              style={[styles.filterChip, mensuelFilter === f && styles.filterChipActive]}
+              onPress={() => { Haptics.selectionAsync(); setMensuelFilter(f); }}
+            >
+              <Text style={[styles.filterChipText, mensuelFilter === f && styles.filterChipTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {showTopFilter && (
+        <View style={styles.filterRow}>
+          {([["7", "7 jours"], ["30", "30 jours"], ["90", "90 jours"]] as [TopFilter, string][]).map(([f, label]) => (
+            <Pressable
+              key={f}
+              style={[styles.filterChip, topFilter === f && styles.filterChipActive]}
+              onPress={() => { Haptics.selectionAsync(); setTopFilter(f); }}
+            >
+              <Text style={[styles.filterChipText, topFilter === f && styles.filterChipTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
       <View style={{ flex: 1 }}>
         {tab === "resume" && (
           <ResumeTab
@@ -190,6 +263,30 @@ export default function ReportingScreen() {
             data={weekdayData}
             isLoading={weekdayLoading}
             weekdayFilter={weekdayFilter}
+            insets={insets}
+          />
+        )}
+        {tab === "hebdo" && (
+          <HebdoTab
+            data={hebdoData}
+            isLoading={hebdoLoading}
+            weeks={Number(hebdoFilter)}
+            insets={insets}
+          />
+        )}
+        {tab === "mensuel" && (
+          <MensuelTab
+            data={mensuelData}
+            isLoading={mensuelLoading}
+            months={Number(mensuelFilter)}
+            insets={insets}
+          />
+        )}
+        {tab === "top" && (
+          <TopTab
+            data={topData}
+            isLoading={topLoading}
+            days={Number(topFilter)}
             insets={insets}
           />
         )}
@@ -850,6 +947,400 @@ function formatDateFr(dateStr: string): string {
 function capitalizeFirst(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
+
+// ── Hebdo Tab ─────────────────────────────────────────────────────────────────
+function HebdoTab({ data, isLoading, weeks, insets }: {
+  data: HebdoReport[];
+  isLoading: boolean;
+  weeks: number;
+  insets: any;
+}) {
+  if (isLoading) {
+    return <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}><ActivityIndicator color={GOLD} /></View>;
+  }
+  if (!data.length) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 8 }}>
+        <Feather name="bar-chart-2" size={40} color={COLORS.textSecondary} />
+        <Text style={{ color: COLORS.textSecondary, fontFamily: "Inter_500Medium" }}>Aucune donnée</Text>
+      </View>
+    );
+  }
+
+  const maxCA = Math.max(...data.map((w) => w.totalCentimes), 1);
+
+  const exportCSV = async () => {
+    const header = "Semaine,CA (€),Articles,Espèces (€),Carte (€)\n";
+    const rows = data.map((w) =>
+      `"${w.label}",${(w.totalCentimes / 100).toFixed(2)},${w.totalArticles},${(w.cashCentimes / 100).toFixed(2)},${(w.carteCentimes / 100).toFixed(2)}`
+    ).join("\n");
+    await Share.share({ message: header + rows, title: "Reporting hebdomadaire" });
+  };
+
+  const totalCA = data.reduce((s, w) => s + w.totalCentimes, 0);
+  const totalArts = data.reduce((s, w) => s + w.totalArticles, 0);
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 24) + 16 }}
+    >
+      {/* Résumé global */}
+      <View style={repStyles.periodCard}>
+        <View style={repStyles.periodCardRow}>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>{weeks} semaines</Text>
+            <Text style={repStyles.periodStatValue}>{formatPrix(totalCA)}</Text>
+          </View>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>Moy. / sem.</Text>
+            <Text style={repStyles.periodStatValue}>{formatPrix(Math.round(totalCA / data.length))}</Text>
+          </View>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>Articles</Text>
+            <Text style={repStyles.periodStatValue}>{totalArts}</Text>
+          </View>
+        </View>
+        <Pressable style={repStyles.exportBtn} onPress={exportCSV}>
+          <Feather name="download" size={14} color={GOLD} />
+          <Text style={repStyles.exportBtnText}>Exporter CSV</Text>
+        </Pressable>
+      </View>
+
+      {/* Barres */}
+      {data.map((w, i) => {
+        const barW = (w.totalCentimes / maxCA) * 100;
+        const isPrev = i < data.length - 1;
+        const prev = isPrev ? data[i + 1] : null;
+        const diff = prev ? w.totalCentimes - prev.totalCentimes : null;
+        return (
+          <View key={w.label} style={repStyles.barRow}>
+            <Text style={repStyles.barLabel}>{w.label}</Text>
+            <View style={repStyles.barTrack}>
+              <View style={[repStyles.barFill, { width: `${barW}%` }]} />
+            </View>
+            <View style={repStyles.barRight}>
+              <Text style={repStyles.barValue}>{formatPrix(w.totalCentimes)}</Text>
+              {diff !== null && (
+                <Text style={[repStyles.barDiff, { color: diff >= 0 ? COLORS.success : COLORS.danger }]}>
+                  {diff >= 0 ? "+" : ""}{formatPrix(diff)}
+                </Text>
+              )}
+            </View>
+          </View>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+// ── Mensuel Tab ───────────────────────────────────────────────────────────────
+function MensuelTab({ data, isLoading, months, insets }: {
+  data: MensuelReport[];
+  isLoading: boolean;
+  months: number;
+  insets: any;
+}) {
+  if (isLoading) {
+    return <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}><ActivityIndicator color={GOLD} /></View>;
+  }
+  if (!data.length) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 8 }}>
+        <Feather name="bar-chart" size={40} color={COLORS.textSecondary} />
+        <Text style={{ color: COLORS.textSecondary, fontFamily: "Inter_500Medium" }}>Aucune donnée</Text>
+      </View>
+    );
+  }
+
+  const maxCA = Math.max(...data.map((m) => m.totalCentimes), 1);
+
+  const exportCSV = async () => {
+    const header = "Mois,CA (€),Articles,Espèces (€),Carte (€)\n";
+    const rows = data.map((m) =>
+      `"${m.label}",${(m.totalCentimes / 100).toFixed(2)},${m.totalArticles},${(m.cashCentimes / 100).toFixed(2)},${(m.carteCentimes / 100).toFixed(2)}`
+    ).join("\n");
+    await Share.share({ message: header + rows, title: "Reporting mensuel" });
+  };
+
+  const totalCA = data.reduce((s, m) => s + m.totalCentimes, 0);
+  const totalArts = data.reduce((s, m) => s + m.totalArticles, 0);
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 24) + 16 }}
+    >
+      <View style={repStyles.periodCard}>
+        <View style={repStyles.periodCardRow}>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>{months} mois</Text>
+            <Text style={repStyles.periodStatValue}>{formatPrix(totalCA)}</Text>
+          </View>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>Moy. / mois</Text>
+            <Text style={repStyles.periodStatValue}>{formatPrix(Math.round(totalCA / data.length))}</Text>
+          </View>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>Articles</Text>
+            <Text style={repStyles.periodStatValue}>{totalArts}</Text>
+          </View>
+        </View>
+        <Pressable style={repStyles.exportBtn} onPress={exportCSV}>
+          <Feather name="download" size={14} color={GOLD} />
+          <Text style={repStyles.exportBtnText}>Exporter CSV</Text>
+        </Pressable>
+      </View>
+
+      {data.map((m, i) => {
+        const barW = (m.totalCentimes / maxCA) * 100;
+        const prev = i < data.length - 1 ? data[i + 1] : null;
+        const diff = prev ? m.totalCentimes - prev.totalCentimes : null;
+        return (
+          <View key={m.label} style={repStyles.barRow}>
+            <Text style={repStyles.barLabel}>{m.label}</Text>
+            <View style={repStyles.barTrack}>
+              <View style={[repStyles.barFill, { width: `${barW}%`, backgroundColor: CARD_COLOR }]} />
+            </View>
+            <View style={repStyles.barRight}>
+              <Text style={repStyles.barValue}>{formatPrix(m.totalCentimes)}</Text>
+              {diff !== null && (
+                <Text style={[repStyles.barDiff, { color: diff >= 0 ? COLORS.success : COLORS.danger }]}>
+                  {diff >= 0 ? "+" : ""}{formatPrix(diff)}
+                </Text>
+              )}
+            </View>
+          </View>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+// ── Top Tab ───────────────────────────────────────────────────────────────────
+function TopTab({ data, isLoading, days, insets }: {
+  data: TopProduit[];
+  isLoading: boolean;
+  days: number;
+  insets: any;
+}) {
+  if (isLoading) {
+    return <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}><ActivityIndicator color={GOLD} /></View>;
+  }
+  if (!data.length) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 8 }}>
+        <Feather name="award" size={40} color={COLORS.textSecondary} />
+        <Text style={{ color: COLORS.textSecondary, fontFamily: "Inter_500Medium" }}>Aucune vente sur la période</Text>
+      </View>
+    );
+  }
+
+  const exportCSV = async () => {
+    const header = "Rang,Collection,Couleur,Qté vendue,CA (€)\n";
+    const rows = data.map((p, i) =>
+      `${i + 1},"${p.collectionNom}","${p.couleur}",${p.totalVendu},${(p.caCentimes / 100).toFixed(2)}`
+    ).join("\n");
+    await Share.share({ message: header + rows, title: `Top produits - ${days} jours` });
+  };
+
+  const maxQty = Math.max(...data.map((p) => p.totalVendu), 1);
+  const medals = ["🥇", "🥈", "🥉"];
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 24) + 16 }}
+    >
+      <View style={repStyles.periodCard}>
+        <View style={repStyles.periodCardRow}>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>Période</Text>
+            <Text style={repStyles.periodStatValue}>{days} jours</Text>
+          </View>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>Produits classés</Text>
+            <Text style={repStyles.periodStatValue}>{data.length}</Text>
+          </View>
+          <View style={repStyles.periodStat}>
+            <Text style={repStyles.periodStatLabel}>Top CA</Text>
+            <Text style={repStyles.periodStatValue}>{data[0] ? formatPrix(data[0].caCentimes) : "—"}</Text>
+          </View>
+        </View>
+        <Pressable style={repStyles.exportBtn} onPress={exportCSV}>
+          <Feather name="download" size={14} color={GOLD} />
+          <Text style={repStyles.exportBtnText}>Exporter CSV</Text>
+        </Pressable>
+      </View>
+
+      {data.map((p, i) => {
+        const barW = (p.totalVendu / maxQty) * 100;
+        return (
+          <View key={`${p.collectionNom}-${p.couleur}`} style={repStyles.topRow}>
+            <View style={repStyles.topRankBox}>
+              <Text style={repStyles.topRank}>{i < 3 ? medals[i] : `#${i + 1}`}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                <View>
+                  <Text style={repStyles.topCollection}>{p.collectionNom}</Text>
+                  <Text style={repStyles.topCouleur}>{capitalizeFirst(p.couleur)}</Text>
+                </View>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={repStyles.topCA}>{formatPrix(p.caCentimes)}</Text>
+                  <Text style={repStyles.topQty}>{p.totalVendu} vendus</Text>
+                </View>
+              </View>
+              <View style={repStyles.topBarTrack}>
+                <View style={[repStyles.topBarFill, { width: `${barW}%` }]} />
+              </View>
+            </View>
+          </View>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+const repStyles = StyleSheet.create({
+  periodCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  periodCardRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginBottom: 12,
+  },
+  periodStat: {
+    alignItems: "center",
+  },
+  periodStatLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 4,
+  },
+  periodStatValue: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.text,
+  },
+  exportBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: GOLD + "66",
+    backgroundColor: GOLD + "11",
+  },
+  exportBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: GOLD,
+  },
+  barRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  barLabel: {
+    width: 72,
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary,
+  },
+  barTrack: {
+    flex: 1,
+    height: 10,
+    backgroundColor: COLORS.border,
+    borderRadius: 5,
+    overflow: "hidden",
+  },
+  barFill: {
+    height: "100%",
+    backgroundColor: GOLD,
+    borderRadius: 5,
+  },
+  barRight: {
+    width: 88,
+    alignItems: "flex-end",
+  },
+  barValue: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.text,
+  },
+  barDiff: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+  },
+  topRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  topRankBox: {
+    width: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 2,
+  },
+  topRank: {
+    fontSize: 18,
+  },
+  topCollection: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  topCouleur: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.text,
+  },
+  topCA: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    color: GOLD,
+  },
+  topQty: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+  },
+  topBarTrack: {
+    height: 6,
+    backgroundColor: COLORS.border,
+    borderRadius: 3,
+    overflow: "hidden",
+    marginTop: 6,
+  },
+  topBarFill: {
+    height: "100%",
+    backgroundColor: GOLD,
+    borderRadius: 3,
+  },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },

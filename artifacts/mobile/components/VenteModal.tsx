@@ -6,6 +6,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -14,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import { formatPrix, type CollectionWithProduits, type Produit, type VenteOpts } from "@/lib/api";
 import {
   computePromo,
   type CartItem,
@@ -32,7 +33,7 @@ type Props = {
   defaultPaymentMode?: "cash" | "carte";
   cart: CartItem[];
   onCartChange: (cart: CartItem[]) => void;
-  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
+  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte", opts?: VenteOpts) => Promise<void>;
   onClose: () => void;
   onPayCarte?: () => void;
 };
@@ -47,16 +48,21 @@ export function VenteModal({ visible, collections, defaultPaymentMode, cart, onC
   );
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number } | null>(null);
+  const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number; remise: number; paymentMode: "cash" | "carte"; commentaire: string } | null>(null);
   const [search, setSearch] = useState("");
   const [showContactModal, setShowContactModal] = useState(false);
   const [contactInfo, setContactInfo] = useState("");
+  const [remiseCentimes, setRemiseCentimes] = useState(0);
+  const [remiseType, setRemiseType] = useState<"fixe" | "pct">("fixe");
+  const [remiseInput, setRemiseInput] = useState("");
+  const [commentaire, setCommentaire] = useState("");
 
   const totalItems = cart.reduce((sum, i) => sum + i.quantite, 0);
   const totalCentimes = cart.reduce((sum, i) => sum + i.produit.prixCentimes * i.quantite, 0);
   const promoRaw = computePromo(cart);
   const promo = promoEnabled ? promoRaw : { nbFree: 0, discountCentimes: 0, freeDetails: [] };
-  const totalFinal = totalCentimes - promo.discountCentimes;
+  const totalApresPromo = totalCentimes - promo.discountCentimes;
+  const totalFinal = Math.max(0, totalApresPromo - remiseCentimes);
 
   const confirmColor = paymentMode === "carte" ? COLORS.card_payment : paymentMode === "cash" ? COLORS.cash : COLORS.accent;
 
@@ -87,6 +93,10 @@ export function VenteModal({ visible, collections, defaultPaymentMode, cart, onC
     setSearch("");
     setContactInfo("");
     setShowContactModal(false);
+    setRemiseCentimes(0);
+    setRemiseType("fixe");
+    setRemiseInput("");
+    setCommentaire("");
     onClose();
   };
 
@@ -126,20 +136,16 @@ export function VenteModal({ visible, collections, defaultPaymentMode, cart, onC
     }
     setLoading(true);
     try {
-      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), paymentMode);
-      setSuccessSnapshot({ items: totalItems, total: totalFinal });
+      const opts: VenteOpts = {};
+      if (remiseCentimes > 0) {
+        opts.remiseCentimes = remiseCentimes;
+        opts.remiseType = remiseType;
+      }
+      if (commentaire.trim()) opts.commentaire = commentaire.trim();
+      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), paymentMode, opts);
+      setSuccessSnapshot({ items: totalItems, total: totalFinal, remise: remiseCentimes, paymentMode, commentaire: commentaire.trim() });
       setSuccess(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setTimeout(() => {
-        setSuccess(false);
-        setSuccessSnapshot(null);
-        onCartChange([]);
-        setView("collections");
-        setSelectedCollection(null);
-        setPaymentMode(defaultPaymentMode ?? null);
-        setSearch("");
-        onClose();
-      }, 1500);
     } catch {
       setLoading(false);
     }
@@ -201,13 +207,47 @@ export function VenteModal({ visible, collections, defaultPaymentMode, cart, onC
             <Text style={styles.successSub}>
               {successSnapshot?.items ?? 0} article{(successSnapshot?.items ?? 0) > 1 ? "s" : ""}
               {successSnapshot && successSnapshot.total > 0 ? ` · ${formatPrix(successSnapshot.total)}` : ""}
+              {successSnapshot && successSnapshot.remise > 0 ? ` (remise -${formatPrix(successSnapshot.remise)})` : ""}
             </Text>
+            <Pressable
+              style={styles.shareBtn}
+              onPress={() => {
+                if (!successSnapshot) return;
+                const now = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+                const lines = cart.map((i) => `  • ${i.produit.collectionNom} ${i.produit.couleur} x${i.quantite} — ${formatPrix(i.produit.prixCentimes * i.quantite)}`).join("\n");
+                const remiseLine = successSnapshot.remise > 0 ? `\nRemise : -${formatPrix(successSnapshot.remise)}` : "";
+                const commentLine = successSnapshot.commentaire ? `\nCommentaire : ${successSnapshot.commentaire}` : "";
+                const mode = successSnapshot.paymentMode === "cash" ? "Espèces" : "Carte SumUp";
+                const ticket = `🏪 LNT Paris\n──────────────\n${lines}${remiseLine}\n──────────────\nTotal : ${formatPrix(successSnapshot.total)}\nPaiement : ${mode}\nHeure : ${now}${commentLine}\n──────────────\nMerci !`;
+                Share.share({ message: ticket, title: "Ticket LNT Paris" });
+              }}
+            >
+              <Feather name="share-2" size={16} color={COLORS.accent} />
+              <Text style={styles.shareBtnText}>Partager le ticket</Text>
+            </Pressable>
+            <Pressable style={[styles.shareBtn, { marginTop: 8, borderColor: COLORS.textSecondary }]} onPress={() => {
+              setSuccess(false);
+              setSuccessSnapshot(null);
+              onCartChange([]);
+              setView("collections");
+              setSelectedCollection(null);
+              setPaymentMode(defaultPaymentMode ?? null);
+              setSearch("");
+              setRemiseCentimes(0);
+              setRemiseInput("");
+              setCommentaire("");
+              onClose();
+            }}>
+              <Feather name="x" size={16} color={COLORS.textSecondary} />
+              <Text style={[styles.shareBtnText, { color: COLORS.textSecondary }]}>Fermer</Text>
+            </Pressable>
           </View>
 
         ) : view === "paiement" ? (
           <PaymentView
             totalItems={totalItems}
             totalCentimes={totalCentimes}
+            totalApresPromo={totalApresPromo}
             totalFinal={totalFinal}
             promo={promo}
             cart={cart}
@@ -220,6 +260,22 @@ export function VenteModal({ visible, collections, defaultPaymentMode, cart, onC
             contactInfo={contactInfo}
             cardPaymentEnabled={cardPaymentEnabled}
             insets={insets}
+            remiseCentimes={remiseCentimes}
+            remiseType={remiseType}
+            remiseInput={remiseInput}
+            commentaire={commentaire}
+            onRemiseTypeChange={setRemiseType}
+            onRemiseInputChange={(val) => {
+              setRemiseInput(val);
+              const n = parseFloat(val.replace(",", "."));
+              if (isNaN(n) || n < 0) { setRemiseCentimes(0); return; }
+              if (remiseType === "fixe") {
+                setRemiseCentimes(Math.min(Math.round(n * 100), totalApresPromo));
+              } else {
+                setRemiseCentimes(Math.min(Math.round(totalApresPromo * n / 100), totalApresPromo));
+              }
+            }}
+            onCommentaireChange={setCommentaire}
           />
 
         ) : view === "produits" && selectedCollection ? (
@@ -621,6 +677,7 @@ function ProduitsView({
 function PaymentView({
   totalItems,
   totalCentimes,
+  totalApresPromo,
   totalFinal,
   promo,
   cart,
@@ -633,9 +690,17 @@ function PaymentView({
   contactInfo,
   cardPaymentEnabled,
   insets,
+  remiseCentimes,
+  remiseType,
+  remiseInput,
+  commentaire,
+  onRemiseTypeChange,
+  onRemiseInputChange,
+  onCommentaireChange,
 }: {
   totalItems: number;
   totalCentimes: number;
+  totalApresPromo: number;
   totalFinal: number;
   promo: PromoResult;
   cart: CartItem[];
@@ -648,6 +713,13 @@ function PaymentView({
   contactInfo: string;
   cardPaymentEnabled: boolean;
   insets: { bottom: number };
+  remiseCentimes: number;
+  remiseType: "fixe" | "pct";
+  remiseInput: string;
+  commentaire: string;
+  onRemiseTypeChange: (t: "fixe" | "pct") => void;
+  onRemiseInputChange: (val: string) => void;
+  onCommentaireChange: (val: string) => void;
 }) {
   const hasPromo = promo.nbFree > 0;
   const confirmColor = paymentMode === "carte" ? COLORS.card_payment : paymentMode === "cash" ? COLORS.cash : COLORS.accent;
@@ -689,33 +761,72 @@ function PaymentView({
 
       {/* Totals */}
       <View style={styles.totalsCard}>
-        {hasPromo ? (
-          <>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>{totalItems} article{totalItems !== 1 ? "s" : ""}</Text>
-              <Text style={styles.totalValue}>{formatPrix(totalCentimes)}</Text>
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>{totalItems} article{totalItems !== 1 ? "s" : ""}</Text>
+          <Text style={styles.totalValue}>{formatPrix(totalCentimes)}</Text>
+        </View>
+        {hasPromo && (
+          <View style={styles.promoRow}>
+            <View style={styles.promoRowLeft}>
+              <Feather name="gift" size={14} color={COLORS.promo} />
+              <Text style={styles.promoLabel}>
+                Promo 2+1 · {promo.nbFree} paire{promo.nbFree > 1 ? "s" : ""} offerte{promo.nbFree > 1 ? "s" : ""}
+              </Text>
             </View>
-            <View style={styles.promoRow}>
-              <View style={styles.promoRowLeft}>
-                <Feather name="gift" size={14} color={COLORS.promo} />
-                <Text style={styles.promoLabel}>
-                  Promo 2+1 · {promo.nbFree} paire{promo.nbFree > 1 ? "s" : ""} offerte{promo.nbFree > 1 ? "s" : ""}
-                </Text>
-              </View>
-              <Text style={styles.promoDiscount}>-{formatPrix(promo.discountCentimes)}</Text>
-            </View>
-            <View style={[styles.totalRow, styles.totalFinalRow]}>
-              <Text style={styles.totalFinalLabel}>Total</Text>
-              <Text style={[styles.totalFinalValue, { color: confirmColor }]}>{formatPrix(totalFinal)}</Text>
-            </View>
-          </>
-        ) : (
-          <View style={styles.totalRow}>
-            <Text style={styles.totalFinalLabel}>Total ({totalItems} article{totalItems !== 1 ? "s" : ""})</Text>
-            <Text style={[styles.totalFinalValue, { color: confirmColor }]}>{formatPrix(totalCentimes)}</Text>
+            <Text style={styles.promoDiscount}>-{formatPrix(promo.discountCentimes)}</Text>
           </View>
         )}
+        {remiseCentimes > 0 && (
+          <View style={styles.promoRow}>
+            <View style={styles.promoRowLeft}>
+              <Feather name="tag" size={14} color="#F59E0B" />
+              <Text style={[styles.promoLabel, { color: "#F59E0B" }]}>Remise manuelle</Text>
+            </View>
+            <Text style={[styles.promoDiscount, { color: "#F59E0B" }]}>-{formatPrix(remiseCentimes)}</Text>
+          </View>
+        )}
+        <View style={[styles.totalRow, styles.totalFinalRow]}>
+          <Text style={styles.totalFinalLabel}>Total</Text>
+          <Text style={[styles.totalFinalValue, { color: confirmColor }]}>{formatPrix(totalFinal)}</Text>
+        </View>
       </View>
+
+      {/* Remise manuelle */}
+      <Text style={styles.paymentSectionLabel}>Remise manuelle (optionnel)</Text>
+      <View style={styles.remiseRow}>
+        <Pressable
+          style={[styles.remiseTypeBtn, remiseType === "fixe" && styles.remiseTypeBtnActive]}
+          onPress={() => { Haptics.selectionAsync(); onRemiseTypeChange("fixe"); onRemiseInputChange(""); }}
+        >
+          <Text style={[styles.remiseTypeBtnText, remiseType === "fixe" && styles.remiseTypeBtnTextActive]}>€ Fixe</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.remiseTypeBtn, remiseType === "pct" && styles.remiseTypeBtnActive]}
+          onPress={() => { Haptics.selectionAsync(); onRemiseTypeChange("pct"); onRemiseInputChange(""); }}
+        >
+          <Text style={[styles.remiseTypeBtnText, remiseType === "pct" && styles.remiseTypeBtnTextActive]}>% Pourcentage</Text>
+        </Pressable>
+      </View>
+      <TextInput
+        style={styles.remiseInput}
+        placeholder={remiseType === "fixe" ? "Ex: 10,00 (€)" : "Ex: 10 (%)"}
+        placeholderTextColor={COLORS.textSecondary}
+        value={remiseInput}
+        onChangeText={onRemiseInputChange}
+        keyboardType="decimal-pad"
+      />
+
+      {/* Commentaire */}
+      <Text style={styles.paymentSectionLabel}>Commentaire (optionnel)</Text>
+      <TextInput
+        style={[styles.remiseInput, { height: 72, textAlignVertical: "top" }]}
+        placeholder="Note sur la vente…"
+        placeholderTextColor={COLORS.textSecondary}
+        value={commentaire}
+        onChangeText={onCommentaireChange}
+        multiline
+        numberOfLines={3}
+      />
 
       {/* Contact info */}
       {contactInfo ? (
@@ -1496,5 +1607,60 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     color: COLORS.accent,
     flex: 1,
+  },
+  remiseRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 10,
+  },
+  remiseTypeBtn: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    backgroundColor: COLORS.card,
+  },
+  remiseTypeBtnActive: {
+    borderColor: "#F59E0B",
+    backgroundColor: "#FFF9EA",
+  },
+  remiseTypeBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary,
+  },
+  remiseTypeBtnTextActive: {
+    color: "#F59E0B",
+  },
+  remiseInput: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.text,
+    marginBottom: 16,
+  },
+  shareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 16,
+    paddingVertical: 11,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.accent,
+    alignSelf: "center",
+  },
+  shareBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.accent,
   },
 });

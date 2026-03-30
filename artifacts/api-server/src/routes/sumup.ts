@@ -241,10 +241,14 @@ router.get("/status/:saleReference", async (req, res) => {
 
 router.post("/confirm", async (req, res) => {
   try {
-    const { saleReference, items, forceConfirm } = req.body as {
+    const { saleReference, items, forceConfirm, remiseCentimes, remiseType, commentaire, groupKey } = req.body as {
       saleReference: string;
       items: { produitId: number; quantite: number }[];
       forceConfirm?: boolean;
+      remiseCentimes?: number;
+      remiseType?: string;
+      commentaire?: string;
+      groupKey?: string;
     };
 
     if (!saleReference || !items || items.length === 0) {
@@ -292,27 +296,37 @@ router.post("/confirm", async (req, res) => {
     }
 
     let totalArticles = 0;
+    const remiseTotale = remiseCentimes ?? 0;
+    const nbItems = items.reduce((s, i) => s + i.quantite, 0);
 
     for (const item of items) {
       const [produit] = await db
-        .select({ quantite: produitsTable.quantite, prixCentimes: produitsTable.prixCentimes })
+        .select({ quantite: produitsTable.quantite, prixCentimes: produitsTable.prixCentimes, stockReserve: produitsTable.stockReserve })
         .from(produitsTable)
         .where(eq(produitsTable.id, item.produitId));
 
       if (!produit) continue;
 
-      const montantCentimes = produit.prixCentimes * item.quantite;
+      const montantBrut = produit.prixCentimes * item.quantite;
+      const remiseProportion = nbItems > 0 ? item.quantite / nbItems : 0;
+      const remiseItem = Math.round(remiseTotale * remiseProportion);
+      const montantCentimes = Math.max(0, montantBrut - remiseItem);
+      const newBoutique = Math.max(0, produit.quantite - item.quantite);
 
       await db.insert(ventesTable).values({
         produitId: item.produitId,
         quantiteVendue: item.quantite,
         typePaiement: "CARTE",
         montantCentimes,
+        remiseCentimes: remiseItem,
+        remiseType: remiseType ?? null,
+        commentaire: commentaire ?? null,
+        groupKey: groupKey ?? null,
         saleReference,
       });
 
       await db.update(produitsTable)
-        .set({ quantite: Math.max(0, produit.quantite - item.quantite) })
+        .set({ quantite: newBoutique })
         .where(eq(produitsTable.id, item.produitId));
 
       totalArticles += item.quantite;

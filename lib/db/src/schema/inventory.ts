@@ -26,6 +26,10 @@ export const ventesTable = pgTable("ventes", {
   quantiteVendue: integer("quantite_vendue").notNull(),
   typePaiement: text("type_paiement").notNull(),
   montantCentimes: integer("montant_centimes").notNull().default(0),
+  remiseCentimes: integer("remise_centimes").notNull().default(0),
+  remiseType: text("remise_type"),
+  commentaire: text("commentaire"),
+  groupKey: text("group_key"),
   sessionId: integer("session_id").references(() => collectionsTable.id),
   saleReference: text("sale_reference"),
   cancelled: boolean("cancelled").notNull().default(false),
@@ -42,6 +46,7 @@ export const mouvementsStockTable = pgTable("mouvements_stock", {
   stockBoutiqueApres: integer("stock_boutique_apres").notNull(),
   stockReserveAvant: integer("stock_reserve_avant").notNull(),
   stockReserveApres: integer("stock_reserve_apres").notNull(),
+  commentaire: text("commentaire"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

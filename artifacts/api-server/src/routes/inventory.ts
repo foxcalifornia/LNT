@@ -339,9 +339,13 @@ router.post("/ventes", async (req, res) => {
 
 router.post("/ventes/batch", async (req, res) => {
   try {
-    const { items, typePaiement } = req.body as {
+    const { items, typePaiement, remiseCentimes, remiseType, commentaire, groupKey } = req.body as {
       items: { produitId: number; quantite: number }[];
       typePaiement: "CASH";
+      remiseCentimes?: number;
+      remiseType?: string;
+      commentaire?: string;
+      groupKey?: string;
     };
 
     if (!items || items.length === 0) {
@@ -353,6 +357,8 @@ router.post("/ventes/batch", async (req, res) => {
       return;
     }
 
+    const remiseTotale = remiseCentimes ?? 0;
+    const nbItems = items.reduce((s, i) => s + i.quantite, 0);
     let totalArticles = 0;
 
     for (const item of items) {
@@ -371,7 +377,10 @@ router.post("/ventes/batch", async (req, res) => {
         return;
       }
 
-      const montantCentimes = produit.prixCentimes * item.quantite;
+      const montantBrut = produit.prixCentimes * item.quantite;
+      const remiseProportion = nbItems > 0 ? item.quantite / nbItems : 0;
+      const remiseItem = Math.round(remiseTotale * remiseProportion);
+      const montantCentimes = Math.max(0, montantBrut - remiseItem);
       const newBoutique = produit.quantite - item.quantite;
 
       await db.insert(ventesTable).values({
@@ -379,6 +388,10 @@ router.post("/ventes/batch", async (req, res) => {
         quantiteVendue: item.quantite,
         typePaiement: "CASH",
         montantCentimes,
+        remiseCentimes: remiseItem,
+        remiseType: remiseType ?? null,
+        commentaire: commentaire ?? null,
+        groupKey: groupKey ?? null,
       });
 
       await db
@@ -528,6 +541,249 @@ router.get("/reporting/by-weekday", async (req, res) => {
   } catch (error) {
     req.log.error(error);
     res.status(500).json({ error: "Erreur reporting par jour de semaine" });
+  }
+});
+
+router.post("/produits/:id/transfert", async (req, res) => {
+  try {
+    const produitId = parseInt(req.params.id);
+    const { quantite, direction, commentaire } = req.body as {
+      quantite: number;
+      direction: "boutique_to_reserve" | "reserve_to_boutique";
+      commentaire?: string;
+    };
+
+    if (!quantite || quantite <= 0) {
+      res.status(400).json({ error: "Quantité invalide" });
+      return;
+    }
+    if (!["boutique_to_reserve", "reserve_to_boutique"].includes(direction)) {
+      res.status(400).json({ error: "Direction invalide" });
+      return;
+    }
+
+    const [produit] = await db.select().from(produitsTable).where(eq(produitsTable.id, produitId)).limit(1);
+    if (!produit) { res.status(404).json({ error: "Produit non trouvé" }); return; }
+
+    let newBoutique = produit.quantite;
+    let newReserve = produit.stockReserve;
+
+    if (direction === "boutique_to_reserve") {
+      if (produit.quantite < quantite) {
+        res.status(400).json({ error: `Stock boutique insuffisant (disponible : ${produit.quantite})` });
+        return;
+      }
+      newBoutique = produit.quantite - quantite;
+      newReserve = produit.stockReserve + quantite;
+    } else {
+      if (produit.stockReserve < quantite) {
+        res.status(400).json({ error: `Stock réserve insuffisant (disponible : ${produit.stockReserve})` });
+        return;
+      }
+      newBoutique = produit.quantite + quantite;
+      newReserve = produit.stockReserve - quantite;
+    }
+
+    const [updated] = await db
+      .update(produitsTable)
+      .set({ quantite: newBoutique, stockReserve: newReserve })
+      .where(eq(produitsTable.id, produitId))
+      .returning();
+
+    await db.insert(mouvementsStockTable).values({
+      produitId,
+      typeMouvement: "transfert",
+      quantite,
+      stockBoutiqueAvant: produit.quantite,
+      stockBoutiqueApres: newBoutique,
+      stockReserveAvant: produit.stockReserve,
+      stockReserveApres: newReserve,
+      commentaire: commentaire ?? null,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    req.log.error(error);
+    res.status(500).json({ error: "Erreur lors du transfert" });
+  }
+});
+
+router.get("/stock/mouvements", async (req, res) => {
+  try {
+    const { produitId, limit: limitParam } = req.query;
+    const limitNum = limitParam ? parseInt(String(limitParam), 10) : 100;
+
+    const conditions = [];
+    if (produitId) {
+      conditions.push(eq(mouvementsStockTable.produitId, parseInt(String(produitId))));
+    }
+
+    const mouvements = await db
+      .select({
+        id: mouvementsStockTable.id,
+        produitId: mouvementsStockTable.produitId,
+        typeMouvement: mouvementsStockTable.typeMouvement,
+        quantite: mouvementsStockTable.quantite,
+        stockBoutiqueAvant: mouvementsStockTable.stockBoutiqueAvant,
+        stockBoutiqueApres: mouvementsStockTable.stockBoutiqueApres,
+        stockReserveAvant: mouvementsStockTable.stockReserveAvant,
+        stockReserveApres: mouvementsStockTable.stockReserveApres,
+        commentaire: mouvementsStockTable.commentaire,
+        createdAt: mouvementsStockTable.createdAt,
+        couleur: produitsTable.couleur,
+        collectionNom: collectionsTable.nom,
+      })
+      .from(mouvementsStockTable)
+      .innerJoin(produitsTable, eq(mouvementsStockTable.produitId, produitsTable.id))
+      .innerJoin(collectionsTable, eq(produitsTable.collectionId, collectionsTable.id))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(mouvementsStockTable.createdAt))
+      .limit(limitNum);
+
+    res.json(mouvements);
+  } catch (error) {
+    req.log.error(error);
+    res.status(500).json({ error: "Erreur lors de la récupération des mouvements" });
+  }
+});
+
+router.get("/reporting/top-produits", async (req, res) => {
+  try {
+    const { days } = req.query;
+    const daysNum = days ? parseInt(String(days), 10) : null;
+    const since = daysNum ? new Date(Date.now() - daysNum * 24 * 60 * 60 * 1000) : null;
+
+    const conditions = [eq(ventesTable.cancelled, false)];
+    if (since) conditions.push(gte(ventesTable.createdAt, since));
+
+    const ventes = await db
+      .select({
+        quantiteVendue: ventesTable.quantiteVendue,
+        montantCentimes: ventesTable.montantCentimes,
+        couleur: produitsTable.couleur,
+        collectionNom: collectionsTable.nom,
+        produitId: produitsTable.id,
+      })
+      .from(ventesTable)
+      .innerJoin(produitsTable, eq(ventesTable.produitId, produitsTable.id))
+      .innerJoin(collectionsTable, eq(produitsTable.collectionId, collectionsTable.id))
+      .where(and(...conditions));
+
+    const prodMap = new Map<string, { produitId: number; collection: string; couleur: string; quantite: number; montantCentimes: number }>();
+
+    for (const v of ventes) {
+      const key = `${v.produitId}`;
+      if (!prodMap.has(key)) {
+        prodMap.set(key, { produitId: v.produitId, collection: v.collectionNom, couleur: v.couleur, quantite: 0, montantCentimes: 0 });
+      }
+      const p = prodMap.get(key)!;
+      p.quantite += v.quantiteVendue;
+      p.montantCentimes += v.montantCentimes;
+    }
+
+    const result = Array.from(prodMap.values()).sort((a, b) => b.quantite - a.quantite);
+    res.json(result);
+  } catch (error) {
+    req.log.error(error);
+    res.status(500).json({ error: "Erreur top produits" });
+  }
+});
+
+router.get("/reporting/hebdo", async (req, res) => {
+  try {
+    const { weeks } = req.query;
+    const weeksNum = weeks ? parseInt(String(weeks), 10) : 8;
+    const since = new Date(Date.now() - weeksNum * 7 * 24 * 60 * 60 * 1000);
+
+    const ventes = await db
+      .select({
+        quantiteVendue: ventesTable.quantiteVendue,
+        montantCentimes: ventesTable.montantCentimes,
+        typePaiement: ventesTable.typePaiement,
+        createdAt: ventesTable.createdAt,
+      })
+      .from(ventesTable)
+      .where(and(eq(ventesTable.cancelled, false), gte(ventesTable.createdAt, since)));
+
+    const weekMap = new Map<string, { label: string; totalCentimes: number; cashCentimes: number; carteCentimes: number; articles: number }>();
+
+    for (const v of ventes) {
+      const d = v.createdAt;
+      const dayOfWeek = d.getDay();
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - ((dayOfWeek + 6) % 7));
+      const weekKey = monday.toISOString().slice(0, 10);
+      const label = `S. ${monday.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}`;
+
+      if (!weekMap.has(weekKey)) {
+        weekMap.set(weekKey, { label, totalCentimes: 0, cashCentimes: 0, carteCentimes: 0, articles: 0 });
+      }
+      const w = weekMap.get(weekKey)!;
+      w.totalCentimes += v.montantCentimes;
+      w.articles += v.quantiteVendue;
+      if (v.typePaiement === "CASH") w.cashCentimes += v.montantCentimes;
+      else w.carteCentimes += v.montantCentimes;
+    }
+
+    const result = Array.from(weekMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([weekKey, data]) => ({ weekKey, ...data }));
+
+    res.json(result);
+  } catch (error) {
+    req.log.error(error);
+    res.status(500).json({ error: "Erreur reporting hebdo" });
+  }
+});
+
+router.get("/reporting/mensuel", async (req, res) => {
+  try {
+    const { months } = req.query;
+    const monthsNum = months ? parseInt(String(months), 10) : 6;
+    const since = new Date();
+    since.setMonth(since.getMonth() - monthsNum);
+    since.setDate(1);
+    since.setHours(0, 0, 0, 0);
+
+    const ventes = await db
+      .select({
+        quantiteVendue: ventesTable.quantiteVendue,
+        montantCentimes: ventesTable.montantCentimes,
+        typePaiement: ventesTable.typePaiement,
+        createdAt: ventesTable.createdAt,
+      })
+      .from(ventesTable)
+      .where(and(eq(ventesTable.cancelled, false), gte(ventesTable.createdAt, since)));
+
+    const monthMap = new Map<string, { label: string; totalCentimes: number; cashCentimes: number; carteCentimes: number; articles: number; prevTotalCentimes?: number }>();
+
+    for (const v of ventes) {
+      const d = v.createdAt;
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleDateString("fr-FR", { month: "short", year: "numeric" });
+
+      if (!monthMap.has(monthKey)) {
+        monthMap.set(monthKey, { label, totalCentimes: 0, cashCentimes: 0, carteCentimes: 0, articles: 0 });
+      }
+      const m = monthMap.get(monthKey)!;
+      m.totalCentimes += v.montantCentimes;
+      m.articles += v.quantiteVendue;
+      if (v.typePaiement === "CASH") m.cashCentimes += v.montantCentimes;
+      else m.carteCentimes += v.montantCentimes;
+    }
+
+    const sorted = Array.from(monthMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([monthKey, data], i, arr) => {
+        const prev = i > 0 ? arr[i - 1][1].totalCentimes : null;
+        const evolution = prev !== null && prev > 0 ? Math.round(((data.totalCentimes - prev) / prev) * 100) : null;
+        return { monthKey, ...data, evolution };
+      });
+
+    res.json(sorted);
+  } catch (error) {
+    req.log.error(error);
+    res.status(500).json({ error: "Erreur reporting mensuel" });
   }
 });
 

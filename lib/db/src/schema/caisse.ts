@@ -8,6 +8,10 @@ export const sessionsTable = pgTable("sessions_caisse", {
   heure: text("heure").notNull(),
   localisation: text("localisation"),
   typePaiement: text("type_paiement"),
+  heureFermeture: text("heure_fermeture"),
+  fondCaisseOuverture: integer("fond_caisse_ouverture"),
+  fondCaisseFermeture: integer("fond_caisse_fermeture"),
+  commentaireFermeture: text("commentaire_fermeture"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

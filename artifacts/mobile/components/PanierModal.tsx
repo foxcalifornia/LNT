@@ -7,14 +7,16 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { api, formatPrix, type CollectionWithProduits, type Produit } from "@/lib/api";
+import { api, formatPrix, type CollectionWithProduits, type Produit, type VenteOpts } from "@/lib/api";
 import {
   cartTotalCentimes,
   cartTotalItems,
@@ -35,7 +37,7 @@ type Props = {
   collections: CollectionWithProduits[];
   onCartChange: (cart: CartItem[]) => void;
   onClose: () => void;
-  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte") => Promise<void>;
+  onVente: (items: { produitId: number; quantite: number }[], paymentMode: "cash" | "carte", opts?: VenteOpts) => Promise<void>;
   onRefreshAfterVente: () => Promise<void>;
 };
 
@@ -46,7 +48,11 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [successMode, setSuccessMode] = useState<"cash" | "carte" | null>(null);
-  const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number } | null>(null);
+  const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number; remise: number; commentaire: string } | null>(null);
+  const [remiseCentimes, setRemiseCentimes] = useState(0);
+  const [remiseType, setRemiseType] = useState<"fixe" | "pct">("fixe");
+  const [remiseInput, setRemiseInput] = useState("");
+  const [commentaire, setCommentaire] = useState("");
 
   const [terminalState, setTerminalState] = useState<TerminalState>("idle");
   const [saleReference, setSaleReference] = useState<string | null>(null);
@@ -62,7 +68,8 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
   const promo = promoEnabled ? promoRaw : { nbFree: 0, discountCentimes: 0, freeDetails: [] };
   const totalItems = cartTotalItems(cart);
   const totalCentimes = cartTotalCentimes(cart);
-  const totalFinal = totalCentimes - promo.discountCentimes;
+  const totalApresPromo = totalCentimes - promo.discountCentimes;
+  const totalFinal = Math.max(0, totalApresPromo - remiseCentimes);
   const hasPromo = promo.nbFree > 0;
 
   const stopPolling = () => {
@@ -112,14 +119,18 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
         if (result.status === "PAID") {
           stopPolling();
           try {
+            const opts: VenteOpts = {};
+            if (remiseCentimes > 0) { opts.remiseCentimes = remiseCentimes; opts.remiseType = remiseType; }
+            if (commentaire.trim()) opts.commentaire = commentaire.trim();
             await api.payments.confirm({
               saleReference: ref,
               items: cartSnapshotRef.current.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })),
+              ...opts,
             });
             await onRefreshAfterVente();
             setTerminalState("paid");
             setSuccessMode("carte");
-            setSuccessSnapshot({ items: cartTotalItems(cartSnapshotRef.current), total: totalFinal });
+            setSuccessSnapshot({ items: cartTotalItems(cartSnapshotRef.current), total: totalFinal, remise: remiseCentimes, commentaire: commentaire.trim() });
             setSuccess(true);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             setTimeout(() => {
@@ -151,19 +162,14 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setLoading(true);
     try {
-      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), "cash");
+      const opts: VenteOpts = {};
+      if (remiseCentimes > 0) { opts.remiseCentimes = remiseCentimes; opts.remiseType = remiseType; }
+      if (commentaire.trim()) opts.commentaire = commentaire.trim();
+      await onVente(cart.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })), "cash", opts);
       setSuccessMode("cash");
-      setSuccessSnapshot({ items: totalItems, total: totalFinal });
+      setSuccessSnapshot({ items: totalItems, total: totalFinal, remise: remiseCentimes, commentaire: commentaire.trim() });
       setSuccess(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setTimeout(() => {
-        setSuccess(false);
-        setSuccessMode(null);
-        setSuccessSnapshot(null);
-        setLoading(false);
-        onCartChange([]);
-        onClose();
-      }, 1500);
     } catch {
       setLoading(false);
     }
@@ -208,15 +214,19 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setTerminalState("creating");
     try {
+      const opts: VenteOpts = {};
+      if (remiseCentimes > 0) { opts.remiseCentimes = remiseCentimes; opts.remiseType = remiseType; }
+      if (commentaire.trim()) opts.commentaire = commentaire.trim();
       await api.payments.confirm({
         saleReference,
         items: cartSnapshotRef.current.map((i) => ({ produitId: i.produit.id, quantite: i.quantite })),
         forceConfirm: true,
+        ...opts,
       });
       await onRefreshAfterVente();
       setTerminalState("paid");
       setSuccessMode("carte");
-      setSuccessSnapshot({ items: cartTotalItems(cartSnapshotRef.current), total: totalFinal });
+      setSuccessSnapshot({ items: cartTotalItems(cartSnapshotRef.current), total: totalFinal, remise: remiseCentimes, commentaire: commentaire.trim() });
       setSuccess(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setTimeout(() => {
@@ -438,6 +448,7 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
               <Text style={styles.successSub}>
                 {successSnapshot?.items ?? 0} article{(successSnapshot?.items ?? 0) > 1 ? "s" : ""}
                 {successSnapshot && successSnapshot.total > 0 ? ` · ${formatPrix(successSnapshot.total)}` : ""}
+                {successSnapshot && successSnapshot.remise > 0 ? ` (remise -${formatPrix(successSnapshot.remise)})` : ""}
               </Text>
               <View style={[styles.successModeBadge, { backgroundColor: successColor + "15", borderColor: successColor + "30" }]}>
                 <Feather name={successMode === "carte" ? "credit-card" : "dollar-sign"} size={14} color={successColor} />
@@ -445,6 +456,39 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                   Paiement {successMode === "carte" ? "Carte Bancaire · SumUp" : "Cash"}
                 </Text>
               </View>
+              <Pressable
+                style={styles.shareBtnSuccess}
+                onPress={() => {
+                  if (!successSnapshot) return;
+                  const now = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+                  const lines = cart.map((i) => `  • ${i.produit.collectionNom} ${i.produit.couleur} x${i.quantite} — ${formatPrix(i.produit.prixCentimes * i.quantite)}`).join("\n");
+                  const remiseLine = successSnapshot.remise > 0 ? `\nRemise : -${formatPrix(successSnapshot.remise)}` : "";
+                  const commentLine = successSnapshot.commentaire ? `\nCommentaire : ${successSnapshot.commentaire}` : "";
+                  const mode = successMode === "cash" ? "Espèces" : "Carte SumUp";
+                  const ticket = `🏪 LNT Paris\n──────────────\n${lines}${remiseLine}\n──────────────\nTotal : ${formatPrix(successSnapshot.total)}\nPaiement : ${mode}\nHeure : ${now}${commentLine}\n──────────────\nMerci !`;
+                  Share.share({ message: ticket, title: "Ticket LNT Paris" });
+                }}
+              >
+                <Feather name="share-2" size={16} color={COLORS.accent} />
+                <Text style={styles.shareBtnSuccessText}>Partager le ticket</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.shareBtnSuccess, { borderColor: COLORS.textSecondary, marginTop: 8 }]}
+                onPress={() => {
+                  setSuccess(false);
+                  setSuccessMode(null);
+                  setSuccessSnapshot(null);
+                  setLoading(false);
+                  setRemiseCentimes(0);
+                  setRemiseInput("");
+                  setCommentaire("");
+                  onCartChange([]);
+                  onClose();
+                }}
+              >
+                <Feather name="x" size={16} color={COLORS.textSecondary} />
+                <Text style={[styles.shareBtnSuccessText, { color: COLORS.textSecondary }]}>Fermer</Text>
+              </Pressable>
             </View>
           ) : isInTerminalFlow ? (
             renderTerminalView()
@@ -593,10 +637,65 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                     </>
                   )}
 
+                  {remiseCentimes > 0 && (
+                    <View style={styles.remiseBanner}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                        <Feather name="tag" size={13} color="#F59E0B" />
+                        <Text style={styles.remiseBannerText}>Remise manuelle</Text>
+                      </View>
+                      <Text style={styles.remiseBannerAmt}>-{formatPrix(remiseCentimes)}</Text>
+                    </View>
+                  )}
+
                   <View style={[styles.totauxRow, styles.totalFinalRow]}>
                     <Text style={styles.totalFinalLabel}>Total à payer</Text>
                     <Text style={styles.totalFinalValue}>{formatPrix(totalFinal)}</Text>
                   </View>
+                </View>
+
+                {/* Remise manuelle */}
+                <View style={styles.remiseBlock}>
+                  <Text style={styles.remiseSectionLabel}>Remise (optionnel)</Text>
+                  <View style={styles.remiseRow}>
+                    <Pressable
+                      style={[styles.remiseTypeBtn, remiseType === "fixe" && styles.remiseTypeBtnActive]}
+                      onPress={() => { Haptics.selectionAsync(); setRemiseType("fixe"); setRemiseInput(""); setRemiseCentimes(0); }}
+                    >
+                      <Text style={[styles.remiseTypeBtnText, remiseType === "fixe" && styles.remiseTypeBtnTextActive]}>€ Fixe</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.remiseTypeBtn, remiseType === "pct" && styles.remiseTypeBtnActive]}
+                      onPress={() => { Haptics.selectionAsync(); setRemiseType("pct"); setRemiseInput(""); setRemiseCentimes(0); }}
+                    >
+                      <Text style={[styles.remiseTypeBtnText, remiseType === "pct" && styles.remiseTypeBtnTextActive]}>% Pourcent.</Text>
+                    </Pressable>
+                  </View>
+                  <TextInput
+                    style={styles.remiseInput}
+                    placeholder={remiseType === "fixe" ? "Ex: 10,00 (€)" : "Ex: 10 (%)"}
+                    placeholderTextColor={COLORS.textSecondary}
+                    value={remiseInput}
+                    onChangeText={(val) => {
+                      setRemiseInput(val);
+                      const n = parseFloat(val.replace(",", "."));
+                      if (isNaN(n) || n < 0) { setRemiseCentimes(0); return; }
+                      if (remiseType === "fixe") {
+                        setRemiseCentimes(Math.min(Math.round(n * 100), totalApresPromo));
+                      } else {
+                        setRemiseCentimes(Math.min(Math.round(totalApresPromo * n / 100), totalApresPromo));
+                      }
+                    }}
+                    keyboardType="decimal-pad"
+                  />
+                  <Text style={styles.remiseSectionLabel}>Commentaire (optionnel)</Text>
+                  <TextInput
+                    style={[styles.remiseInput, { height: 64, textAlignVertical: "top" }]}
+                    placeholder="Note sur la vente…"
+                    placeholderTextColor={COLORS.textSecondary}
+                    value={commentaire}
+                    onChangeText={setCommentaire}
+                    multiline
+                  />
                 </View>
               </ScrollView>
 
@@ -924,4 +1023,49 @@ const styles = StyleSheet.create({
     borderRadius: 16, paddingVertical: 16,
   },
   payBtnText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff" },
+  remiseBlock: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  remiseSectionLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  remiseRow: { flexDirection: "row", gap: 8, marginBottom: 10 },
+  remiseTypeBtn: {
+    flex: 1, paddingVertical: 8, borderRadius: 10,
+    borderWidth: 1.5, borderColor: COLORS.border,
+    alignItems: "center", backgroundColor: COLORS.card,
+  },
+  remiseTypeBtnActive: { borderColor: "#F59E0B", backgroundColor: "#FFF9EA" },
+  remiseTypeBtnText: { fontSize: 13, fontFamily: "Inter_500Medium", color: COLORS.textSecondary },
+  remiseTypeBtnTextActive: { color: "#F59E0B" },
+  remiseInput: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1, borderColor: COLORS.border,
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 15, fontFamily: "Inter_400Regular",
+    color: COLORS.text, marginBottom: 10,
+  },
+  remiseBanner: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: "#FFF9EA", borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 8,
+    marginBottom: 8,
+  },
+  remiseBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", color: "#F59E0B" },
+  remiseBannerAmt: { fontSize: 13, fontFamily: "Inter_700Bold", color: "#F59E0B" },
+  shareBtnSuccess: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    marginTop: 16, paddingVertical: 11, paddingHorizontal: 20,
+    borderRadius: 12, borderWidth: 1.5, borderColor: COLORS.accent,
+    alignSelf: "center",
+  },
+  shareBtnSuccessText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: COLORS.accent },
 });

@@ -6,10 +6,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -62,6 +64,10 @@ export default function CaisseScreen() {
   const [openingLoading, setOpeningLoading] = useState(false);
   const [adminOverride, setAdminOverride] = useState<AdminOverride>(false);
   const adminOverrideRef = useRef<AdminOverride>(false);
+  const [showFermetureModal, setShowFermetureModal] = useState(false);
+  const [fondFermeture, setFondFermeture] = useState("");
+  const [commentaireFermeture, setCommentaireFermeture] = useState("");
+  const [fermetureLoading, setFermetureLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data: collections = [], refetch: refetchCollections } = useQuery({
@@ -201,13 +207,14 @@ export default function CaisseScreen() {
 
   const handleVente = async (
     items: { produitId: number; quantite: number }[],
-    paymentMode: "cash" | "carte"
+    paymentMode: "cash" | "carte",
+    opts?: import("@/lib/api").VenteOpts
   ) => {
     if (!currentSession) return;
     if (paymentMode === "carte") {
       throw new Error("Les paiements carte doivent passer par le terminal SumUp.");
     }
-    await api.inventory.batchVente({ items, typePaiement: "CASH" });
+    await api.inventory.batchVente({ items, typePaiement: "CASH", ...opts });
     refetchCollections();
     queryClient.invalidateQueries({ queryKey: ["ventesJour"] });
     queryClient.invalidateQueries({ queryKey: ["consommables"] });
@@ -215,28 +222,32 @@ export default function CaisseScreen() {
 
   const closeCaisse = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert(
-      "Fermer la caisse ?",
-      "La session sera fermée. Il faudra saisir le mot de passe demain pour réouvrir.",
-      [
-        { text: "Annuler", style: "cancel" },
-        {
-          text: "Fermer",
-          style: "destructive",
-          onPress: () => {
-            adminOverrideRef.current = false;
-            setAdminOverride(false);
-            setCurrentSession(null);
-            setCart([]);
-            if (isCaisseHours()) {
-              setCaisseState("need_open");
-            } else {
-              setCaisseState(isAdmin ? "admin_view" : "closed_hours");
-            }
-          },
-        },
-      ]
-    );
+    setFondFermeture("");
+    setCommentaireFermeture("");
+    setShowFermetureModal(true);
+  };
+
+  const confirmFermeture = async () => {
+    setFermetureLoading(true);
+    try {
+      if (currentSession) {
+        await api.caisse.fermerSession(currentSession.id, {
+          fondCaisseFermeture: fondFermeture ? Math.round(parseFloat(fondFermeture.replace(",", ".")) * 100) : undefined,
+          commentaireFermeture: commentaireFermeture.trim() || undefined,
+        });
+      }
+    } catch {}
+    setShowFermetureModal(false);
+    setFermetureLoading(false);
+    adminOverrideRef.current = false;
+    setAdminOverride(false);
+    setCurrentSession(null);
+    setCart([]);
+    if (isCaisseHours()) {
+      setCaisseState("need_open");
+    } else {
+      setCaisseState(isAdmin ? "admin_view" : "closed_hours");
+    }
   };
 
   return (
@@ -324,6 +335,98 @@ export default function CaisseScreen() {
           ]);
         }}
       />
+
+      {/* Modal de clôture caisse */}
+      <Modal
+        visible={showFermetureModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFermetureModal(false)}
+      >
+        <View style={styles.fermetureOverlay}>
+          <View style={styles.fermetureModal}>
+            <View style={styles.fermetureHeader}>
+              <Feather name="lock" size={22} color={COLORS.accent} />
+              <Text style={styles.fermetureTitle}>Clôture de caisse</Text>
+            </View>
+
+            <FermetureSummary sessionId={currentSession?.id ?? null} />
+
+            <Text style={styles.fermetureLabel}>Fond de caisse (montant en espèces, optionnel)</Text>
+            <TextInput
+              style={styles.fermetureInput}
+              placeholder="Ex: 150,00 (€)"
+              placeholderTextColor={COLORS.textSecondary}
+              value={fondFermeture}
+              onChangeText={setFondFermeture}
+              keyboardType="decimal-pad"
+            />
+
+            <Text style={styles.fermetureLabel}>Commentaire de fermeture (optionnel)</Text>
+            <TextInput
+              style={[styles.fermetureInput, { height: 72, textAlignVertical: "top" }]}
+              placeholder="Observations de la journée…"
+              placeholderTextColor={COLORS.textSecondary}
+              value={commentaireFermeture}
+              onChangeText={setCommentaireFermeture}
+              multiline
+            />
+
+            <View style={styles.fermetureActions}>
+              <Pressable style={styles.fermetureCancelBtn} onPress={() => setShowFermetureModal(false)}>
+                <Text style={styles.fermetureCancelText}>Annuler</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.fermetureConfirmBtn, fermetureLoading && { opacity: 0.6 }]}
+                onPress={confirmFermeture}
+                disabled={fermetureLoading}
+              >
+                {fermetureLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Feather name="lock" size={16} color="#fff" />
+                    <Text style={styles.fermetureConfirmText}>Fermer la caisse</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function FermetureSummary({ sessionId }: { sessionId: number | null }) {
+  const { data: ventesJour } = useQuery({
+    queryKey: ["ventesJour"],
+    queryFn: api.caisse.getVentesJour,
+    enabled: !!sessionId,
+  });
+
+  if (!ventesJour) return null;
+  const totalCash = ventesJour.totalCash;
+  const totalCarte = ventesJour.totalCarte;
+  const total = ventesJour.total;
+  const nbVentes = ventesJour.transactions.filter((t) => !t.cancelled).length;
+
+  return (
+    <View style={styles.fermetureResume}>
+      <Text style={styles.fermetureResumeTitle}>Résumé de la journée</Text>
+      <View style={styles.fermetureResumeRow}>
+        <Text style={styles.fermetureResumeLabel}>Espèces</Text>
+        <Text style={[styles.fermetureResumeValue, { color: COLORS.cash }]}>{formatPrix(totalCash)}</Text>
+      </View>
+      <View style={styles.fermetureResumeRow}>
+        <Text style={styles.fermetureResumeLabel}>Carte</Text>
+        <Text style={[styles.fermetureResumeValue, { color: COLORS.card_payment }]}>{formatPrix(totalCarte)}</Text>
+      </View>
+      <View style={[styles.fermetureResumeRow, { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 8, marginTop: 4 }]}>
+        <Text style={[styles.fermetureResumeLabel, { fontFamily: "Inter_700Bold" }]}>Total</Text>
+        <Text style={[styles.fermetureResumeValue, { fontFamily: "Inter_700Bold", color: COLORS.accent }]}>{formatPrix(total)}</Text>
+      </View>
+      <Text style={styles.fermetureResumeNb}>{nbVentes} transaction{nbVentes !== 1 ? "s" : ""} ce jour</Text>
     </View>
   );
 }
@@ -1726,5 +1829,119 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_700Bold",
     color: "#92400E",
+  },
+  fermetureOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  fermetureModal: {
+    width: "100%",
+    backgroundColor: COLORS.background,
+    borderRadius: 20,
+    padding: 22,
+    maxWidth: 420,
+  },
+  fermetureHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
+  },
+  fermetureTitle: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.text,
+  },
+  fermetureResume: {
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  fermetureResumeTitle: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  fermetureResumeRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  fermetureResumeLabel: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+  },
+  fermetureResumeValue: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.text,
+  },
+  fermetureResumeNb: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  fermetureLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: COLORS.textSecondary,
+    marginBottom: 8,
+  },
+  fermetureInput: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.text,
+    marginBottom: 14,
+  },
+  fermetureActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 6,
+  },
+  fermetureCancelBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+  },
+  fermetureCancelText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: COLORS.textSecondary,
+  },
+  fermetureConfirmBtn: {
+    flex: 2,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: COLORS.danger,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  fermetureConfirmText: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
 });

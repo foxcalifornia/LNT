@@ -409,6 +409,38 @@ router.delete("/ventes/last", async (req, res) => {
   }
 });
 
+router.put("/sessions/:id/fermeture", async (req, res) => {
+  try {
+    const sessionId = parseInt(req.params.id);
+    const { fondCaisseFermeture, commentaireFermeture, heureFermeture } = req.body as {
+      fondCaisseFermeture?: number;
+      commentaireFermeture?: string;
+      heureFermeture?: string;
+    };
+
+    const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId)).limit(1);
+    if (!session) {
+      res.status(404).json({ error: "Session introuvable" });
+      return;
+    }
+
+    const [updated] = await db
+      .update(sessionsTable)
+      .set({
+        fondCaisseFermeture: fondCaisseFermeture ?? null,
+        commentaireFermeture: commentaireFermeture ?? null,
+        heureFermeture: heureFermeture ?? new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+      })
+      .where(eq(sessionsTable.id, sessionId))
+      .returning();
+
+    res.json(updated);
+  } catch (error) {
+    req.log.error(error);
+    res.status(500).json({ error: "Erreur lors de la fermeture de session" });
+  }
+});
+
 router.post("/sessions", async (req, res) => {
   try {
     const parsed = insertSessionSchema.safeParse(req.body);
