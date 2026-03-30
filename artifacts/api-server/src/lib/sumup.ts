@@ -439,6 +439,51 @@ export async function deleteSumUpCheckout(checkoutId: string): Promise<void> {
 }
 
 /**
+ * Send an official SumUp receipt to a customer via email or SMS.
+ * Requires a user token with the appropriate scope.
+ * @param transactionId - The SumUp transaction UUID (e.g. 940f4c95-f4ac-...)
+ * @param contact - Either { email } or { phone } (E.164 format, e.g. +33612345678)
+ */
+export async function sendSumUpReceipt(
+  transactionId: string,
+  contact: { email?: string; phone?: string }
+): Promise<void> {
+  let token = await getUserToken();
+
+  const doSend = async (tok: string): Promise<{ status: number; body: string }> => {
+    const body: Record<string, string> = {};
+    if (contact.email) body.email = contact.email;
+    if (contact.phone) body.phone = contact.phone;
+    const res = await fetch(`${SUMUP_BASE}/v0.1/me/receipts/${transactionId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.text() };
+  };
+
+  let result = await doSend(token);
+
+  if (result.status === 401) {
+    process.env["SUMUP_USER_TOKEN"] = "";
+    try {
+      token = await refreshAndGetUserToken();
+      result = await doSend(token);
+    } catch {
+      throw new Error("Token SumUp expiré. Veuillez vous reconnecter via Paramètres.");
+    }
+  }
+
+  if (result.status === 404) {
+    throw new Error("Transaction introuvable. Vérifiez que la vente a bien été enregistrée.");
+  }
+
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`Erreur SumUp envoi reçu (${result.status}): ${result.body}`);
+  }
+}
+
+/**
  * Process a refund for a SumUp transaction.
  * Requires the user token to have the "payments" scope.
  * Returns the refund transaction ID on success.

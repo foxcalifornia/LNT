@@ -338,6 +338,11 @@ export const api = {
         "/payments/cancel",
         { method: "POST", body: JSON.stringify({ saleReference }) }
       ),
+    sendReceipt: (data: { saleReference?: string; transactionId?: string; email?: string; phone?: string }) =>
+      request<{ message: string }>(
+        "/payments/receipt",
+        { method: "POST", body: JSON.stringify(data) }
+      ),
   },
 
   auth: {

@@ -10,6 +10,7 @@ import {
   getTransactionByClientId,
   getSumUpAnchorTs,
   deleteSumUpCheckout,
+  sendSumUpReceipt,
 } from "../lib/sumup";
 import { decrementerConsommables } from "../lib/consommables";
 
@@ -380,6 +381,47 @@ router.post("/cancel", async (req, res) => {
     await logPayment({ saleReference, action: "cancelled", statut: "CANCELLED" });
 
     res.json({ message: "Paiement annulé", saleReference });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: String((err as Error).message) });
+  }
+});
+
+router.post("/receipt", async (req, res) => {
+  try {
+    const { saleReference, transactionId: directTxnId, email, phone } = req.body as {
+      saleReference?: string;
+      transactionId?: string;
+      email?: string;
+      phone?: string;
+    };
+
+    if (!email && !phone) {
+      res.status(400).json({ error: "Email ou téléphone requis" });
+      return;
+    }
+
+    let txnId = directTxnId;
+
+    if (!txnId && saleReference) {
+      const [record] = await db
+        .select()
+        .from(sumupCheckoutsTable)
+        .where(eq(sumupCheckoutsTable.saleReference, saleReference));
+      if (!record?.sumupTransactionId) {
+        res.status(404).json({ error: "Transaction SumUp introuvable pour cette référence" });
+        return;
+      }
+      txnId = record.sumupTransactionId;
+    }
+
+    if (!txnId) {
+      res.status(400).json({ error: "saleReference ou transactionId requis" });
+      return;
+    }
+
+    await sendSumUpReceipt(txnId, { email, phone });
+    res.json({ message: "Reçu envoyé avec succès" });
   } catch (err) {
     req.log.error(err);
     res.status(500).json({ error: String((err as Error).message) });

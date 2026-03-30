@@ -49,6 +49,10 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
   const [success, setSuccess] = useState(false);
   const [successMode, setSuccessMode] = useState<"cash" | "carte" | null>(null);
   const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number; remise: number; commentaire: string } | null>(null);
+  const [receiptContact, setReceiptContact] = useState("");
+  const [receiptSending, setReceiptSending] = useState(false);
+  const [receiptStatus, setReceiptStatus] = useState<"idle" | "sent" | "error">("idle");
+  const [receiptError, setReceiptError] = useState("");
   const [remiseCentimes, setRemiseCentimes] = useState(0);
   const [remiseType, setRemiseType] = useState<"fixe" | "pct">("fixe");
   const [remiseInput, setRemiseInput] = useState("");
@@ -463,6 +467,65 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                 <Feather name="share-2" size={16} color={COLORS.accent} />
                 <Text style={styles.shareBtnSuccessText}>Partager le ticket</Text>
               </Pressable>
+              {successMode === "carte" && (
+                <View style={styles.receiptBlock}>
+                  <Text style={styles.receiptTitle}>
+                    <Feather name="mail" size={13} color={COLORS.accent} />{"  "}Envoyer le reçu SumUp
+                  </Text>
+                  {receiptStatus === "sent" ? (
+                    <View style={styles.receiptSentRow}>
+                      <Feather name="check-circle" size={15} color="#4CAF50" />
+                      <Text style={styles.receiptSentText}>Reçu envoyé !</Text>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={styles.receiptInputRow}>
+                        <TextInput
+                          style={styles.receiptInput}
+                          placeholder="Email ou téléphone (+33…)"
+                          placeholderTextColor={COLORS.textSecondary}
+                          value={receiptContact}
+                          onChangeText={(v) => { setReceiptContact(v); setReceiptStatus("idle"); setReceiptError(""); }}
+                          keyboardType="email-address"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          editable={!receiptSending}
+                        />
+                        <Pressable
+                          style={[styles.receiptSendBtn, receiptSending && { opacity: 0.5 }]}
+                          disabled={receiptSending || !receiptContact.trim()}
+                          onPress={async () => {
+                            const contact = receiptContact.trim();
+                            if (!contact || !saleReference) return;
+                            setReceiptSending(true);
+                            setReceiptError("");
+                            try {
+                              const isPhone = contact.startsWith("+") || /^\d/.test(contact);
+                              await api.payments.sendReceipt({
+                                saleReference,
+                                ...(isPhone ? { phone: contact } : { email: contact }),
+                              });
+                              setReceiptStatus("sent");
+                            } catch (e) {
+                              setReceiptStatus("error");
+                              setReceiptError((e as Error).message ?? "Erreur envoi");
+                            } finally {
+                              setReceiptSending(false);
+                            }
+                          }}
+                        >
+                          {receiptSending
+                            ? <Feather name="loader" size={15} color="#fff" />
+                            : <Feather name="send" size={15} color="#fff" />}
+                        </Pressable>
+                      </View>
+                      {receiptStatus === "error" && (
+                        <Text style={styles.receiptErrorText}>{receiptError}</Text>
+                      )}
+                    </>
+                  )}
+                </View>
+              )}
               <Pressable
                 style={[styles.shareBtnSuccess, { borderColor: COLORS.textSecondary, marginTop: 8 }]}
                 onPress={() => {
@@ -475,6 +538,9 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                   setRemiseCentimes(0);
                   setRemiseInput("");
                   setCommentaire("");
+                  setReceiptContact("");
+                  setReceiptStatus("idle");
+                  setReceiptError("");
                   onCartChange([]);
                   onClose();
                 }}
@@ -1061,4 +1127,37 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
   shareBtnSuccessText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: COLORS.accent },
+  receiptBlock: {
+    marginTop: 14, width: "100%", backgroundColor: COLORS.surface,
+    borderRadius: 12, borderWidth: 1, borderColor: COLORS.border,
+    padding: 12,
+  },
+  receiptTitle: {
+    fontSize: 13, fontFamily: "Inter_600SemiBold", color: COLORS.accent,
+    marginBottom: 8,
+  },
+  receiptInputRow: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+  },
+  receiptInput: {
+    flex: 1, height: 38, borderRadius: 8, borderWidth: 1,
+    borderColor: COLORS.border, paddingHorizontal: 10,
+    fontSize: 14, fontFamily: "Inter_400Regular", color: COLORS.text,
+    backgroundColor: COLORS.background,
+  },
+  receiptSendBtn: {
+    width: 38, height: 38, borderRadius: 8,
+    backgroundColor: COLORS.accent,
+    alignItems: "center", justifyContent: "center",
+  },
+  receiptSentRow: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+  },
+  receiptSentText: {
+    fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#4CAF50",
+  },
+  receiptErrorText: {
+    fontSize: 12, fontFamily: "Inter_400Regular", color: "#E53E3E",
+    marginTop: 4,
+  },
 });
