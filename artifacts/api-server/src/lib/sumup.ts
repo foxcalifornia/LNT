@@ -455,13 +455,25 @@ export interface SumUpReceiptData {
  * @param transactionId - The SumUp transaction UUID or code
  */
 export async function getSumUpReceiptData(transactionId: string): Promise<SumUpReceiptData> {
-  const token = await getSumUpToken();
   const merchantCode = process.env["SUMUP_MERCHANT_CODE"] ?? "MC4VDM6U";
 
-  const res = await fetch(
-    `${SUMUP_BASE}/v1.1/receipts/${encodeURIComponent(transactionId)}?mid=${encodeURIComponent(merchantCode)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
+  const doFetch = async (tok: string) =>
+    fetch(
+      `${SUMUP_BASE}/v1.1/receipts/${encodeURIComponent(transactionId)}?mid=${encodeURIComponent(merchantCode)}`,
+      { headers: { Authorization: `Bearer ${tok}` } }
+    );
+
+  let token = await getUserToken();
+  let res = await doFetch(token);
+
+  if (res.status === 401) {
+    try {
+      token = await refreshAndGetUserToken();
+      res = await doFetch(token);
+    } catch {
+      throw new Error("Token SumUp expiré. Reconnectez-vous via Paramètres → Connecter SumUp.");
+    }
+  }
 
   if (res.status === 404) {
     throw new Error("Reçu SumUp introuvable pour cette transaction.");
