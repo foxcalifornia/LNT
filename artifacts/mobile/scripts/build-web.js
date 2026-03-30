@@ -36,7 +36,7 @@ async function main() {
   console.log("Building web app for Netlify deployment...");
 
   const domain = process.env.EXPO_PUBLIC_DOMAIN || "lntparis.netlify.app";
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL || "https://lnt-paris.replit.app/api";
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL || "https://lnt-paris.replit.app";
 
   console.log(`Domain: ${domain}`);
   console.log(`API URL: ${apiUrl}`);
