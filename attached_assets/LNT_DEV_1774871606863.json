@@ -1,0 +1,13 @@
+{
+  "application_type": "ios",
+  "client_id": "cc_classic_5X3WhQqARmlwslp9gsGdAx90RCSzH",
+  "client_secret": "cc_sk_classic_Xa1YjKwSK6XKL77U0cP3HyPLYJicxIEbvVSZ9uOu9pa3He9yqV",
+  "cors_uris": [
+    ""
+  ],
+  "id": "CCCYUE3UP",
+  "name": "LNT DEV",
+  "redirect_uris": [
+    "https://ef6aaffd-892e-4910-8a97-f1022ab16d6a-00-1ja4tgl9cqe7z.picard.replit.dev/callback"
+  ]
+}
