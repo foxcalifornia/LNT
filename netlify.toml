@@ -1,6 +1,6 @@
 [build]
-command = "pnpm --filter @workspace/mobile... run build"
-publish = "artifacts/mobile"
+command = "pnpm --filter @workspace/mobile run build:web"
+publish = "artifacts/mobile/dist"
 base = "."
 
 [build.environment]
