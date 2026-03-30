@@ -329,6 +329,8 @@ function SectionPaiements({
   const sumupClientId = process.env.EXPO_PUBLIC_SUMUP_CLIENT_ID;
 
   const handleReauth = () => {
+    const apiBase = process.env.EXPO_PUBLIC_API_URL || "https://lntparis.replit.app";
+    const authUrl = `${apiBase}/api/auth/sumup`;
     Alert.alert(
       "Réautorisation SumUp",
       "Vous allez être redirigé vers SumUp pour accorder les permissions nécessaires (dont l'historique des transactions). Continuer ?",
@@ -337,7 +339,7 @@ function SectionPaiements({
         {
           text: "Continuer",
           onPress: () => {
-            Linking.openURL("https://lntparis.replit.app/api/auth/sumup");
+            Linking.openURL(authUrl);
           },
         },
       ],
