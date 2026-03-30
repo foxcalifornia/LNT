@@ -213,9 +213,16 @@ export default function CaisseScreen() {
 
   const handleCancelLastVente = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    const dernièreVente = queryClient.getQueryData<import("../../lib/api").VentesJour>(["ventesJour"])?.transactions?.[0];
+    const isCarte = dernièreVente?.typePaiement === "CARTE";
+    const confirmMsg = isCarte
+      ? "Cette action est irréversible. Les produits seront remis en stock et le montant sera remboursé sur la carte bancaire du client."
+      : "Cette action est irréversible. Les produits seront remis en stock et le total mis à jour.";
+
     Alert.alert(
       "Annuler la dernière vente ?",
-      "Cette action est irréversible. Les produits seront remis en stock et le total mis à jour.",
+      confirmMsg,
       [
         { text: "Annuler", style: "cancel" },
         {
@@ -223,12 +230,26 @@ export default function CaisseScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              await api.caisse.cancelLastVente();
+              const result = await api.caisse.cancelLastVente();
               await Promise.all([
                 refetchCollections(),
                 queryClient.refetchQueries({ queryKey: ["ventesJour"] }),
               ]);
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+              if (isCarte) {
+                if (result.refund?.success) {
+                  Alert.alert(
+                    "Vente annulée",
+                    `Le remboursement SumUp a été traité avec succès.`,
+                  );
+                } else if (result.refund?.error) {
+                  Alert.alert(
+                    "Vente annulée — Remboursement manuel requis",
+                    `La vente a été annulée, mais le remboursement automatique a échoué :\n\n${result.refund.error}\n\nVeuillez effectuer le remboursement manuellement depuis l'application SumUp.`,
+                  );
+                }
+              }
             } catch (err: any) {
               Alert.alert(
                 "Erreur",
@@ -748,6 +769,16 @@ function ActiveCaisseView({
                     {dernièreVente.typePaiement === "CASH" ? "Cash" : "Carte"}
                   </Text>
                 </View>
+                {dernièreVente.typePaiement === "CARTE" && dernièreVente.sumupTransactionId && (
+                  <Text style={styles.txIdText} numberOfLines={1}>
+                    ID: {dernièreVente.sumupTransactionId.slice(-8).toUpperCase()}
+                  </Text>
+                )}
+                {dernièreVente.refunded && (
+                  <View style={styles.refundedBadge}>
+                    <Text style={styles.refundedBadgeText}>Remboursé</Text>
+                  </View>
+                )}
               </View>
             </View>
           </View>
@@ -780,7 +811,7 @@ function ActiveCaisseView({
                 <View key={i} style={styles.txJourRow}>
                   <Text style={styles.txJourHeure}>{t.heure}</Text>
                   <Text style={styles.txJourSep}>—</Text>
-                  <Text style={[styles.txJourMontant, { color }]}>
+                  <Text style={[styles.txJourMontant, { color: t.refunded ? COLORS.textSecondary : color, textDecorationLine: t.refunded ? "line-through" : "none" }]}>
                     {formatPrix(t.montantCentimes)}
                   </Text>
                   <Text style={styles.txJourSep}>—</Text>
@@ -794,6 +825,16 @@ function ActiveCaisseView({
                       {isCash ? "Cash" : "Carte"}
                     </Text>
                   </View>
+                  {!isCash && t.sumupTransactionId && (
+                    <Text style={styles.txJourTxId}>
+                      #{t.sumupTransactionId.slice(-8).toUpperCase()}
+                    </Text>
+                  )}
+                  {t.refunded && (
+                    <View style={styles.txJourRefunded}>
+                      <Text style={styles.txJourRefundedText}>RMB</Text>
+                    </View>
+                  )}
                 </View>
               );
             })
@@ -1417,6 +1458,45 @@ const styles = StyleSheet.create({
   txJourBadgeText: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
+  },
+  txJourTxId: {
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+    letterSpacing: 0.3,
+  },
+  txJourRefunded: {
+    backgroundColor: COLORS.danger + "15",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  txJourRefundedText: {
+    fontSize: 10,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.danger,
+    letterSpacing: 0.5,
+  },
+  txIdText: {
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+    letterSpacing: 0.3,
+    marginTop: 2,
+  },
+  refundedBadge: {
+    backgroundColor: COLORS.danger + "15",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 3,
+    alignSelf: "flex-start",
+  },
+  refundedBadgeText: {
+    fontSize: 10,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.danger,
+    letterSpacing: 0.5,
   },
   adminConsultContent: {
     padding: 20,

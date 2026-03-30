@@ -14,6 +14,8 @@ export const sumupCheckoutsTable = pgTable("sumup_checkouts", {
   // Used as an anchor to find only transactions that appeared AFTER this checkout was created,
   // regardless of any server/SumUp clock offset.
   sumupAnchorTs: text("sumup_anchor_ts"),
+  refundId: text("refund_id"),
+  refundedAt: timestamp("refunded_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

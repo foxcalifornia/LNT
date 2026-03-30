@@ -298,6 +298,7 @@ router.post("/confirm", async (req, res) => {
         quantiteVendue: item.quantite,
         typePaiement: "CARTE",
         montantCentimes,
+        saleReference,
       });
 
       await db.update(produitsTable)

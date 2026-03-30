@@ -2,8 +2,10 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sessionsTable, insertSessionSchema } from "@workspace/db/schema";
 import { ventesTable, produitsTable, collectionsTable } from "@workspace/db/schema";
-import { desc, gte, eq, and, lte } from "drizzle-orm";
+import { sumupCheckoutsTable } from "@workspace/db/schema";
+import { desc, gte, eq, and } from "drizzle-orm";
 import { restaurerConsommables } from "../lib/consommables";
+import { refundTransaction } from "../lib/sumup";
 
 const router: IRouter = Router();
 
@@ -31,10 +33,20 @@ router.get("/today", async (req, res) => {
         createdAt: ventesTable.createdAt,
         couleur: produitsTable.couleur,
         collectionNom: collectionsTable.nom,
+        saleReference: ventesTable.saleReference,
+        sumupTransactionId: sumupCheckoutsTable.sumupTransactionId,
+        refundedAt: sumupCheckoutsTable.refundedAt,
       })
       .from(ventesTable)
       .innerJoin(produitsTable, eq(ventesTable.produitId, produitsTable.id))
       .innerJoin(collectionsTable, eq(produitsTable.collectionId, collectionsTable.id))
+      .leftJoin(
+        sumupCheckoutsTable,
+        and(
+          eq(ventesTable.saleReference, sumupCheckoutsTable.saleReference),
+          eq(ventesTable.typePaiement, "CARTE"),
+        ),
+      )
       .where(gte(ventesTable.createdAt, startOfDay))
       .orderBy(ventesTable.createdAt);
 
@@ -43,6 +55,8 @@ router.get("/today", async (req, res) => {
       typePaiement: string;
       montantCentimes: number;
       lastTime: number;
+      sumupTransactionId: string | null;
+      refunded: boolean;
       articles: { couleur: string; collectionNom: string; quantiteVendue: number; montantCentimes: number }[];
     }[] = [];
 
@@ -52,6 +66,10 @@ router.get("/today", async (req, res) => {
       if (last && ts - last.lastTime <= 15000 && v.typePaiement === last.typePaiement) {
         last.montantCentimes += v.montantCentimes;
         last.lastTime = ts;
+        if (!last.sumupTransactionId && v.sumupTransactionId) {
+          last.sumupTransactionId = v.sumupTransactionId;
+        }
+        if (v.refundedAt) last.refunded = true;
         const existing = last.articles.find(
           (a) => a.couleur === v.couleur && a.collectionNom === v.collectionNom
         );
@@ -72,6 +90,8 @@ router.get("/today", async (req, res) => {
           typePaiement: v.typePaiement,
           montantCentimes: v.montantCentimes,
           lastTime: ts,
+          sumupTransactionId: v.sumupTransactionId ?? null,
+          refunded: !!v.refundedAt,
           articles: [{ couleur: v.couleur, collectionNom: v.collectionNom, quantiteVendue: v.quantiteVendue, montantCentimes: v.montantCentimes }],
         });
       }
@@ -90,7 +110,6 @@ router.get("/today", async (req, res) => {
 
 router.delete("/ventes/last", async (req, res) => {
   try {
-    // Get the most recent ventes (last 24h to avoid timezone issues)
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     const recentVentes = await db
@@ -108,15 +127,46 @@ router.delete("/ventes/last", async (req, res) => {
 
     const lastVente = recentVentes[0];
     const lastTime = lastVente.createdAt.getTime();
-    const windowMs = 15000; // 15s window to group a single "transaction"
+    const windowMs = 15000;
 
-    // All ventes within 15s of the last vente with the same payment type
     const transactionVentes = recentVentes.filter((v) => {
       const ts = v.createdAt.getTime();
       return lastTime - ts <= windowMs && v.typePaiement === lastVente.typePaiement;
     });
 
     req.log.info({ transactionVentes: transactionVentes.length }, "DELETE /ventes/last: cancelling ventes");
+
+    let refundResult: { success: boolean; refundId?: string; error?: string } | null = null;
+
+    if (lastVente.typePaiement === "CARTE") {
+      const saleRef = lastVente.saleReference;
+      if (saleRef) {
+        const [checkout] = await db
+          .select()
+          .from(sumupCheckoutsTable)
+          .where(eq(sumupCheckoutsTable.saleReference, saleRef));
+
+        if (checkout?.sumupTransactionId && !checkout.refundId) {
+          const amountEur = checkout.montantCentimes / 100;
+          try {
+            req.log.info({ txnId: checkout.sumupTransactionId, amountEur }, "Processing SumUp refund");
+            const refundId = await refundTransaction(checkout.sumupTransactionId, amountEur);
+            await db
+              .update(sumupCheckoutsTable)
+              .set({ refundId, refundedAt: new Date() })
+              .where(eq(sumupCheckoutsTable.saleReference, saleRef));
+            refundResult = { success: true, refundId };
+            req.log.info({ refundId }, "SumUp refund processed successfully");
+          } catch (refundErr) {
+            const errMsg = String((refundErr as Error).message);
+            req.log.warn({ err: errMsg }, "SumUp refund failed");
+            refundResult = { success: false, error: errMsg };
+          }
+        } else if (checkout?.refundId) {
+          refundResult = { success: true, refundId: checkout.refundId };
+        }
+      }
+    }
 
     let totalArticlesRestores = 0;
 
@@ -139,7 +189,11 @@ router.delete("/ventes/last", async (req, res) => {
       await restaurerConsommables(totalArticlesRestores);
     }
 
-    res.json({ cancelled: transactionVentes.length, message: "Vente annulée avec succès" });
+    res.json({
+      cancelled: transactionVentes.length,
+      message: "Vente annulée avec succès",
+      refund: refundResult,
+    });
   } catch (error) {
     req.log.error(error);
     res.status(500).json({ error: "Erreur lors de l'annulation de la vente" });

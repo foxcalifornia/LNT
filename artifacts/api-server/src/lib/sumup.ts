@@ -437,3 +437,48 @@ export async function deleteSumUpCheckout(checkoutId: string): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+/**
+ * Process a refund for a SumUp transaction.
+ * Requires the user token to have the "payments" scope.
+ * Returns the refund transaction ID on success.
+ */
+export async function refundTransaction(txnId: string, amountEur: number): Promise<string> {
+  let token = await getUserToken();
+
+  const doRefund = async (tok: string): Promise<{ status: number; body: string }> => {
+    const res = await fetch(`${SUMUP_BASE}/v0.1/me/refund/${txnId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: amountEur }),
+    });
+    return { status: res.status, body: await res.text() };
+  };
+
+  let result = await doRefund(token);
+
+  if (result.status === 401) {
+    process.env["SUMUP_USER_TOKEN"] = "";
+    try {
+      token = await refreshAndGetUserToken();
+      result = await doRefund(token);
+    } catch {
+      throw new Error("Token SumUp expiré. Veuillez vous reconnecter via Paramètres → Connecter SumUp.");
+    }
+  }
+
+  if (result.status === 403) {
+    throw new Error("Le remboursement SumUp nécessite le scope « payments ». Veuillez vous reconnecter via Paramètres → Connecter SumUp pour activer cette permission.");
+  }
+
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`Erreur SumUp remboursement (${result.status}): ${result.body}`);
+  }
+
+  try {
+    const data = JSON.parse(result.body) as { id?: string; transaction_id?: string };
+    return data.id ?? data.transaction_id ?? txnId;
+  } catch {
+    return txnId;
+  }
+}

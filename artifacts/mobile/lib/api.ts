@@ -80,6 +80,8 @@ export type VenteTransaction = {
   heure: string;
   typePaiement: "CASH" | "CARTE";
   montantCentimes: number;
+  sumupTransactionId?: string | null;
+  refunded?: boolean;
   articles: {
     couleur: string;
     collectionNom: string;
@@ -143,7 +145,7 @@ export const api = {
       }),
     getVentesJour: () => request<VentesJour>("/caisse/today"),
     cancelLastVente: () =>
-      request<{ cancelled: number; message: string }>("/caisse/ventes/last", { method: "DELETE" }),
+      request<{ cancelled: number; message: string; refund?: { success: boolean; refundId?: string; error?: string } | null }>("/caisse/ventes/last", { method: "DELETE" }),
   },
   inventory: {
     getCollections: () => request<CollectionWithProduits[]>("/collections"),

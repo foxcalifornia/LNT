@@ -157,8 +157,18 @@ function TransactionCard({ transaction: t }: { transaction: VenteTransaction }) 
             </Text>
           </View>
           <Text style={styles.txHeure}>{t.heure}</Text>
+          {!isCash && t.sumupTransactionId && (
+            <Text style={styles.txTxId}>
+              #{t.sumupTransactionId.slice(-8).toUpperCase()}
+            </Text>
+          )}
+          {t.refunded && (
+            <View style={styles.txRefundedBadge}>
+              <Text style={styles.txRefundedText}>Remboursé</Text>
+            </View>
+          )}
         </View>
-        <Text style={[styles.txMontant, { color }]}>{formatPrix(t.montantCentimes)}</Text>
+        <Text style={[styles.txMontant, { color: t.refunded ? COLORS.textSecondary : color, textDecorationLine: t.refunded ? "line-through" : "none" }]}>{formatPrix(t.montantCentimes)}</Text>
       </View>
 
       {t.articles.length > 0 && (
@@ -357,6 +367,24 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: "Inter_700Bold",
     letterSpacing: -0.3,
+  },
+  txTxId: {
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+    color: COLORS.textSecondary,
+    letterSpacing: 0.3,
+  },
+  txRefundedBadge: {
+    backgroundColor: COLORS.danger + "15",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  txRefundedText: {
+    fontSize: 10,
+    fontFamily: "Inter_700Bold",
+    color: COLORS.danger,
+    letterSpacing: 0.5,
   },
   txArticles: {
     gap: 6,

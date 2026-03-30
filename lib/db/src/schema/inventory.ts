@@ -27,6 +27,7 @@ export const ventesTable = pgTable("ventes", {
   typePaiement: text("type_paiement").notNull(),
   montantCentimes: integer("montant_centimes").notNull().default(0),
   sessionId: integer("session_id").references(() => collectionsTable.id),
+  saleReference: text("sale_reference"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
