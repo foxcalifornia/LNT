@@ -21,6 +21,7 @@ import {
   computePromo,
   type CartItem,
 } from "@/lib/cart";
+import { useSettings } from "@/context/SettingsContext";
 
 const COLORS = Colors.light;
 const POLL_INTERVAL_MS = 3000;
@@ -40,6 +41,7 @@ type Props = {
 
 export function PanierModal({ visible, cart, collections, onCartChange, onClose, onVente, onRefreshAfterVente }: Props) {
   const insets = useSafeAreaInsets();
+  const { promoEnabled } = useSettings();
   const [editingProduitId, setEditingProduitId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -56,7 +58,8 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
   const pollStartRef = useRef<number>(0);
   const cartSnapshotRef = useRef<CartItem[]>([]);
 
-  const promo = computePromo(cart);
+  const promoRaw = computePromo(cart);
+  const promo = promoEnabled ? promoRaw : { nbFree: 0, discountCentimes: 0, freeDetails: [] };
   const totalItems = cartTotalItems(cart);
   const totalCentimes = cartTotalCentimes(cart);
   const totalFinal = totalCentimes - promo.discountCentimes;
