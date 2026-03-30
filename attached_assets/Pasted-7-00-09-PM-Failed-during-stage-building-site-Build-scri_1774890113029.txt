@@ -1,0 +1,55 @@
+7:00:09 PM: Failed during stage 'building site': Build script returned non-zero exit code: 2 (https://ntl.fyi/exit-code-2)
+7:00:08 PM: Netlify Build                                                 
+7:00:08 PM: ────────────────────────────────────────────────────────────────
+7:00:08 PM: ​
+7:00:08 PM: ❯ Version
+7:00:08 PM:   @netlify/build 35.11.2
+7:00:08 PM: ​
+7:00:08 PM: ❯ Flags
+7:00:08 PM:   accountId: 68af00d92121a787648b5162
+7:00:08 PM:   baseRelDir: true
+7:00:08 PM:   buildId: 69caac066bbe1f0da0d8838b
+7:00:08 PM:   deployId: 69caac066bbe1f0da0d8838d
+7:00:08 PM:   packagePath: artifacts/mobile
+7:00:08 PM: ​
+7:00:08 PM: ❯ Current directory
+7:00:08 PM:   /opt/build/repo
+7:00:08 PM: ​
+7:00:08 PM: ❯ Config file
+7:00:08 PM:   No config file was defined: using default values.
+7:00:08 PM: ​
+7:00:08 PM: ❯ Context
+7:00:08 PM:   production
+7:00:08 PM: ​
+7:00:08 PM: Build command from Netlify app                                
+7:00:08 PM: ────────────────────────────────────────────────────────────────
+7:00:08 PM: ​
+7:00:08 PM: $ pnpm --filter @workspace/mobile... run build
+7:00:08 PM: Scope: 2 of 9 workspace projects
+7:00:08 PM: artifacts/mobile build$ node scripts/build.js
+7:00:08 PM: artifacts/mobile build: Building static Expo Go deployment...
+7:00:08 PM: artifacts/mobile build: ERROR: No deployment domain found. Set REPLIT_INTERNAL_APP_DOMAIN, REPLIT_DEV_DOMAIN, or EXPO_PUBLIC_DOMAIN
+7:00:08 PM: artifacts/mobile build: Failed
+7:00:08 PM: /opt/build/repo/artifacts/mobile:
+7:00:08 PM:  ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/mobile@0.0.0 build: `node scripts/build.js`
+7:00:08 PM: Exit status 1
+7:00:08 PM: ​
+7:00:08 PM: "build.command" failed                                        
+7:00:08 PM: ────────────────────────────────────────────────────────────────
+7:00:08 PM: ​
+7:00:08 PM:   Error message
+7:00:08 PM:   Command failed with exit code 1: pnpm --filter @workspace/mobile... run build (https://ntl.fyi/exit-code-1)
+7:00:08 PM: ​
+7:00:08 PM:   Error location
+7:00:08 PM:   In Build command from Netlify app:
+7:00:08 PM:   pnpm --filter @workspace/mobile... run build
+7:00:08 PM: ​
+7:00:08 PM:   Resolved config
+7:00:08 PM:   build:
+7:00:08 PM:     command: pnpm --filter @workspace/mobile... run build
+7:00:08 PM:     commandOrigin: ui
+7:00:08 PM:     publish: /opt/build/repo/artifacts/mobile/dist
+7:00:08 PM:     publishOrigin: ui
+7:00:09 PM: Build failed due to a user error: Build script returned non-zero exit code: 2
+7:00:09 PM: Failing build: Failed to build site
+7:00:09 PM: Finished processing build request in 18.405s
