@@ -74,7 +74,7 @@ export default function LoginScreen() {
           <View style={styles.logoDivider} />
           <Text style={styles.logoSubText}>PARIS</Text>
         </View>
-        <Text style={styles.tagline}>Gestion de Stock</Text>
+        <Text style={styles.tagline}>Gestion de Stand</Text>
       </View>
 
       <View style={styles.card}>
@@ -179,7 +179,7 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>© 2025 LNT Paris · Tous droits réservés</Text>
+        <Text style={styles.footerText}>© 2026 LNT Paris · Tous droits réservés</Text>
       </View>
     </KeyboardAvoidingView>
   );

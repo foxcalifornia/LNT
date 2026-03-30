@@ -68,7 +68,7 @@ export default function HomeScreen() {
           <View style={styles.logoDivider} />
           <Text style={styles.logoSubText}>PARIS</Text>
         </View>
-        <Text style={styles.tagline}>Gestion de Stock</Text>
+        <Text style={styles.tagline}>Gestion de Stand</Text>
 
         <View style={[styles.roleBadge, { backgroundColor: roleBg, borderColor: roleColor + "40" }]}>
           <Feather name={roleIcon as any} size={13} color={roleColor} />
@@ -125,7 +125,7 @@ export default function HomeScreen() {
           <Feather name="log-out" size={15} color={COLORS.danger} />
           <Text style={styles.logoutText}>Se déconnecter</Text>
         </Pressable>
-        <Text style={styles.footerText}>© 2025 LNT Paris · Tous droits réservés</Text>
+        <Text style={styles.footerText}>© 2026 LNT Paris · Tous droits réservés</Text>
       </View>
     </View>
   );
