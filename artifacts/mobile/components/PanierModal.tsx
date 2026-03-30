@@ -49,8 +49,6 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
   const [success, setSuccess] = useState(false);
   const [successMode, setSuccessMode] = useState<"cash" | "carte" | null>(null);
   const [successSnapshot, setSuccessSnapshot] = useState<{ items: number; total: number; remise: number; commentaire: string } | null>(null);
-  const [receiptLoading, setReceiptLoading] = useState(false);
-  const [receiptError, setReceiptError] = useState("");
   const [remiseCentimes, setRemiseCentimes] = useState(0);
   const [remiseType, setRemiseType] = useState<"fixe" | "pct">("fixe");
   const [remiseInput, setRemiseInput] = useState("");
@@ -135,6 +133,15 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
             setSuccessSnapshot({ items: cartTotalItems(cartSnapshotRef.current), total: totalFinal, remise: remiseCentimes, commentaire: commentaire.trim() });
             setSuccess(true);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            setTimeout(() => {
+              setSuccess(false);
+              setSuccessMode(null);
+              setSuccessSnapshot(null);
+              setTerminalState("idle");
+              setSaleReference(null);
+              onCartChange([]);
+              onClose();
+            }, 2000);
           } catch (confirmErr) {
             setTerminalState("failed");
             setTerminalError(`Erreur confirmation: ${(confirmErr as Error).message}`);
@@ -465,69 +472,16 @@ export function PanierModal({ visible, cart, collections, onCartChange, onClose,
                 <Feather name="share-2" size={16} color={COLORS.accent} />
                 <Text style={styles.shareBtnSuccessText}>Partager le ticket</Text>
               </Pressable>
-              {successMode === "carte" && saleReference && (
-                <Pressable
-                  style={[styles.shareBtnSuccess, { borderColor: "#5C8EFF", marginTop: 8, opacity: receiptLoading ? 0.6 : 1 }]}
-                  disabled={receiptLoading}
-                  onPress={async () => {
-                    if (!saleReference) return;
-                    setReceiptLoading(true);
-                    setReceiptError("");
-                    try {
-                      const receipt = await api.payments.getReceipt(saleReference);
-                      const now = receipt.localTime
-                        ? new Date(receipt.localTime).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-                        : new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-                      const amountStr = receipt.amount
-                        ? `${parseFloat(receipt.amount).toFixed(2).replace(".", ",")} ${receipt.currency ?? "EUR"}`
-                        : successSnapshot
-                        ? `${(successSnapshot.total / 100).toFixed(2).replace(".", ",")} EUR`
-                        : "";
-                      const lines: string[] = [
-                        `🏪 ${receipt.businessName ?? "LNT Paris"} — Reçu Officiel`,
-                        "────────────────────────",
-                      ];
-                      if (receipt.transactionCode) lines.push(`Code : ${receipt.transactionCode}`);
-                      lines.push(`Montant : €${amountStr}`);
-                      lines.push(`Mode : Carte Bancaire · SumUp`);
-                      if (receipt.cardBrand || receipt.cardLastFour) {
-                        lines.push(`Carte : ${receipt.cardBrand ?? ""}${receipt.cardLastFour ? ` •••• ${receipt.cardLastFour}` : ""}`);
-                      }
-                      if (receipt.authorizationCode) lines.push(`Autorisation : ${receipt.authorizationCode}`);
-                      lines.push(`Heure : ${now}`);
-                      lines.push("────────────────────────");
-                      lines.push("Merci !");
-                      Share.share({ message: lines.join("\n"), title: "Reçu SumUp" });
-                    } catch (e) {
-                      setReceiptError((e as Error).message ?? "Erreur récupération reçu");
-                    } finally {
-                      setReceiptLoading(false);
-                    }
-                  }}
-                >
-                  <Feather name="file-text" size={16} color="#5C8EFF" />
-                  <Text style={[styles.shareBtnSuccessText, { color: "#5C8EFF" }]}>
-                    {receiptLoading ? "Chargement…" : "Reçu officiel SumUp"}
-                  </Text>
-                </Pressable>
-              )}
-              {!!receiptError && (
-                <Text style={[styles.receiptErrorText, { alignSelf: "center", marginTop: 4 }]}>{receiptError}</Text>
-              )}
               <Pressable
                 style={[styles.shareBtnSuccess, { borderColor: COLORS.textSecondary, marginTop: 8 }]}
                 onPress={() => {
                   setSuccess(false);
                   setSuccessMode(null);
                   setSuccessSnapshot(null);
-                  setTerminalState("idle");
-                  setSaleReference(null);
                   setLoading(false);
                   setRemiseCentimes(0);
                   setRemiseInput("");
                   setCommentaire("");
-                  setReceiptLoading(false);
-                  setReceiptError("");
                   onCartChange([]);
                   onClose();
                 }}
@@ -1114,37 +1068,4 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
   shareBtnSuccessText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: COLORS.accent },
-  receiptBlock: {
-    marginTop: 14, width: "100%", backgroundColor: COLORS.surface,
-    borderRadius: 12, borderWidth: 1, borderColor: COLORS.border,
-    padding: 12,
-  },
-  receiptTitle: {
-    fontSize: 13, fontFamily: "Inter_600SemiBold", color: COLORS.accent,
-    marginBottom: 8,
-  },
-  receiptInputRow: {
-    flexDirection: "row", alignItems: "center", gap: 8,
-  },
-  receiptInput: {
-    flex: 1, height: 38, borderRadius: 8, borderWidth: 1,
-    borderColor: COLORS.border, paddingHorizontal: 10,
-    fontSize: 14, fontFamily: "Inter_400Regular", color: COLORS.text,
-    backgroundColor: COLORS.background,
-  },
-  receiptSendBtn: {
-    width: 38, height: 38, borderRadius: 8,
-    backgroundColor: COLORS.accent,
-    alignItems: "center", justifyContent: "center",
-  },
-  receiptSentRow: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-  },
-  receiptSentText: {
-    fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#4CAF50",
-  },
-  receiptErrorText: {
-    fontSize: 12, fontFamily: "Inter_400Regular", color: "#E53E3E",
-    marginTop: 4,
-  },
 });

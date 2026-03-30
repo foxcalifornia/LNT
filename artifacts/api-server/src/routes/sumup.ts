@@ -10,7 +10,6 @@ import {
   getTransactionByClientId,
   getSumUpAnchorTs,
   deleteSumUpCheckout,
-  getSumUpReceiptData,
 } from "../lib/sumup";
 import { decrementerConsommables } from "../lib/consommables";
 
@@ -381,28 +380,6 @@ router.post("/cancel", async (req, res) => {
     await logPayment({ saleReference, action: "cancelled", statut: "CANCELLED" });
 
     res.json({ message: "Paiement annulé", saleReference });
-  } catch (err) {
-    req.log.error(err);
-    res.status(500).json({ error: String((err as Error).message) });
-  }
-});
-
-router.get("/receipt/:saleReference", async (req, res) => {
-  try {
-    const { saleReference } = req.params;
-
-    const [record] = await db
-      .select()
-      .from(sumupCheckoutsTable)
-      .where(eq(sumupCheckoutsTable.saleReference, saleReference));
-
-    if (!record?.sumupTransactionId) {
-      res.status(404).json({ error: "Transaction SumUp introuvable pour cette référence" });
-      return;
-    }
-
-    const receiptData = await getSumUpReceiptData(record.sumupTransactionId);
-    res.json(receiptData);
   } catch (err) {
     req.log.error(err);
     res.status(500).json({ error: String((err as Error).message) });

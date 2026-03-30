@@ -338,20 +338,6 @@ export const api = {
         "/payments/cancel",
         { method: "POST", body: JSON.stringify({ saleReference }) }
       ),
-    getReceipt: (saleReference: string) =>
-      request<{
-        transactionCode?: string;
-        amount?: string;
-        currency?: string;
-        businessName?: string;
-        authorizationCode?: string;
-        cardLastFour?: string;
-        cardBrand?: string;
-        localTime?: string;
-      }>(
-        `/payments/receipt/${encodeURIComponent(saleReference)}`,
-        { cache: "no-store" }
-      ),
   },
 
   auth: {
