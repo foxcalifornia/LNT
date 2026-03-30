@@ -1,0 +1,19 @@
+{
+  "name": "LNT Paris - Gestion de Stand",
+  "short_name": "LNT Paris",
+  "description": "Application de gestion de stand pour LNT Paris",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F9FAFB",
+  "theme_color": "#C9AD71",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "lang": "fr"
+}
