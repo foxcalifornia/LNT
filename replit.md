@@ -11,7 +11,11 @@ pnpm workspace monorepo using TypeScript. Application de gestion de stock pour L
 - **Package manager**: pnpm
 - **TypeScript version**: 5.9
 - **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
+- **Database**: Supabase PostgreSQL (project `yowfhpixlzbczycdfniy`, region eu-west-1) + Drizzle ORM
+  - Connection via Transaction Pooler (`aws-1-eu-west-1.pooler.supabase.com:6543`)
+  - Env var: `SUPABASE_DATABASE_URL` (takes priority over `DATABASE_URL`)
+  - SSL: `rejectUnauthorized: false` (Supabase self-signed cert)
+  - Fallback: Replit PostgreSQL (`DATABASE_URL`) for local dev if Supabase unavailable
 - **Validation**: Zod (`zod/v4`), `drizzle-zod`
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
