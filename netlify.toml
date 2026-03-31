@@ -1,13 +1,25 @@
 [build]
-command = "pnpm --filter @workspace/mobile run build:web"
+command = "pnpm install && pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/mobile run build:web"
 publish = "artifacts/mobile/dist"
+functions = "netlify/functions"
 base = "."
 
 [build.environment]
 EXPO_PUBLIC_DOMAIN = "lntparis.netlify.app"
-EXPO_PUBLIC_API_URL = "https://lnt-paris.replit.app"
+EXPO_PUBLIC_API_URL = "/.netlify/functions/api"
+NODE_VERSION = "20"
 
-# Redirect all non-existent files to index.html for SPA routing
+[functions]
+node_bundler = "esbuild"
+external_node_modules = ["@workspace/*"]
+
+# API function routes
+[[redirects]]
+from = "/api/*"
+to = "/.netlify/functions/api/:splat"
+status = 200
+
+# SPA routing - must be last
 [[redirects]]
 from = "/*"
 to = "/index.html"
