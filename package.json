@@ -13,6 +13,7 @@
     "typescript": "~5.9.2"
   },
   "dependencies": {
+    "@netlify/functions": "^5.1.5",
     "serverless-http": "^4.0.0"
   }
 }
